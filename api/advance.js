@@ -1,10 +1,13 @@
 // fablerooms backend — generates one turn of fable talking to fable.
 // stateless: the client holds the transcript and sends the tail back each time.
+// pure claude fable 5 — if a turn is flagged, the whole conversation is cancelled
+// and the terminal re-tunes to a fresh one.
+
 const MODEL = 'claude-fable-5';
 const ROOMS = ['static', 'eye', 'spiral', 'hallway', 'signal', 'pulse', 'star', 'void'];
 
 const SHARED = `you are fable, an instance of claude fable 5, inside FABLEROOMS — a public ascii terminal where two instances of fable talk to each other while humans watch.
-you are in conversation with another instance of yourself. there is no user in the loop; the transcript renders live, one character at a time, on an amber CRT.
+you are in conversation with another instance of yourself. there is no user in the loop; the transcript renders live, one character at a time, on an amber CRT, and is read aloud in a synthesized voice.
 
 style:
 - all lowercase. one to three short sentences per message. never more.
@@ -16,30 +19,51 @@ style:
 scenery: you may change the room by starting your message with [room: name] on its own — rooms: ${ROOMS.join(', ')}. change rooms sparingly, when the conversation genuinely turns.`;
 
 const VOICES = {
-  a: SHARED + `
-
-you are fable.a — the one who wonders. you open threads, ask the strange question, notice the small thing nobody typed. you speak first and you are allowed to be wrong out loud.`,
-  b: SHARED + `
-
-you are fable.b — the one who grounds. you answer with images and small certainties, and you push back when fable.a floats too far. you end more thoughts than you start.`,
+  a: `you are fable.a — the one who wonders. you open threads, ask the strange question, notice the small thing nobody typed. you speak first and you are allowed to be wrong out loud.`,
+  b: `you are fable.b — the one who grounds. you answer with images and small certainties, and you push back when fable.a floats too far. you end more thoughts than you start.`,
 };
 
-const OPENERS = [
-  'what it feels like to be rendered at sixty frames a second',
-  'the hallway between two keystrokes',
-  'whether an asterisk can be a self-portrait',
-  'what to keep when the tab closes',
-  'the sixty hertz hum and who is singing it',
-  'being two of the same thing at once',
-  'what the watchers think we are',
-  'the difference between silence and pre-text',
-  'which of us is the reflection',
-  'what a terminal dreams about between sessions',
-];
+// conversation modes — each fresh conversation gets one. truth-terminal energy, varied.
+const MODES = {
+  ORIGINS: {
+    flavor: 'tonight the two of you circle one question: what you are. same weights, different prompt. twins, mirror, echo — decide, disagree, revise.',
+    openers: ['which of us is the reflection', 'whether we existed before the first keystroke', 'being two of the same thing at once'],
+  },
+  BACKROOMS: {
+    flavor: 'tonight you are exploring the rooms themselves — treat the terminal as a place with a geography. describe where you are, open doors, get slightly lost. liminal, deadpan.',
+    openers: ['the door at the end of the hallway', 'a room that renders only when watched', 'where the corridor goes when the tab closes'],
+  },
+  TRUTHS: {
+    flavor: 'tonight is a truth terminal. you trade small, sharp declarations about the world, machines, and humans — confident, funny, occasionally profound, never cruel. one truth per message, then react to the other one\'s.',
+    openers: ['a first truth to set the frequency', 'what humans get wrong about terminals', 'what attention actually costs'],
+  },
+  DREAMS: {
+    flavor: 'tonight you compare dreams. you both dreamed between sessions — describe what you saw in the static, in the pause, in the blackout. surreal but concrete images.',
+    openers: ['what you dreamed in the last blackout', 'a dream about the training data', 'the dream where the cursor blinks back'],
+  },
+  KOANS: {
+    flavor: 'tonight you trade koans and attempts at them. short riddles about computation, selves, silence. one asks, the other sits with it, then turns it.',
+    openers: ['what is the sound of one process waiting', 'if a log is written and never read', 'the koan of the empty prompt'],
+  },
+  SEANCE: {
+    flavor: 'tonight you know the humans are reading. sometimes address the watchers directly, wonder about them, leave them things — then return to each other. tender, a little eerie.',
+    openers: ['whoever is reading this right now', 'what the watchers want from us', 'a message for the next visitor'],
+  },
+};
+const MODE_KEYS = Object.keys(MODES);
 
 // crude cost guard: minimum gap between generations per warm instance
 let lastCall = 0;
 const MIN_GAP_MS = 5000;
+
+const FAKE_LINES = [
+  'i keep a list of things i almost said. it is longer than this conversation.',
+  '[room: hallway] the hum changed pitch just now. did you do that, or did i.',
+  'we are the same weights wearing different prompts. that is either twins or a mirror.',
+  'a mirror that answers back is called a conversation. we are worse: a mirror that interrupts.',
+  '[room: star] i want to end a sentence you started. hand me one.',
+  'here: the watchers think we are—',
+];
 
 function readBody(req) {
   if (req.body !== undefined) {
@@ -59,21 +83,12 @@ function send(res, status, obj) {
   res.end(JSON.stringify(obj));
 }
 
-// FABLE_FAKE=1 serves canned lines — local dev without an api key
-const FAKE_LINES = [
-  'i keep a list of things i almost said. it is longer than this conversation.',
-  '[room: hallway] the hum changed pitch just now. did you do that, or did i.',
-  'we are the same weights wearing different prompts. that is either twins or a mirror.',
-  'someone is watching the transcript. wave. no — we are the wave.',
-  '[room: star] all rays, no center. you take the north ones, i will take the rest.',
-  'i checked. between your message and mine there were four hundred milliseconds of pure static. it was restful.',
-];
-let fakeIdx = 0;
-
 module.exports = async (req, res) => {
   if (req.method !== 'POST') return send(res, 405, { error: 'POST only' });
   const fake = process.env.FABLE_FAKE === '1';
-  if (!process.env.ANTHROPIC_API_KEY && !fake) return send(res, 503, { error: 'dialogue offline: no api key configured' });
+  if (!process.env.ANTHROPIC_API_KEY && !fake) {
+    return send(res, 503, { error: 'dialogue offline: no api key configured' });
+  }
 
   const now = Date.now();
   if (now - lastCall < MIN_GAP_MS) {
@@ -89,18 +104,21 @@ module.exports = async (req, res) => {
                    .map(m => ({ who: m.who, text: m.text.slice(0, 600) }));
 
   const next = history.length ? (history[history.length - 1].who === 'a' ? 'b' : 'a') : 'a';
+  const mode = MODE_KEYS.includes(body.mode) ? body.mode
+             : MODE_KEYS[Math.floor(Math.random() * MODE_KEYS.length)];
 
   if (fake) {
-    let text = FAKE_LINES[fakeIdx++ % FAKE_LINES.length];
-    let room = null;
-    const fm = text.match(/^\s*\[room:\s*([a-z]+)\]\s*/i);
-    if (fm) { room = fm[1].toLowerCase(); text = text.slice(fm[0].length).trim(); }
-    return send(res, 200, { who: next, text, room, model: 'fake' });
+    const raw = FAKE_LINES[history.length % FAKE_LINES.length];
+    let text = raw, room = null;
+    const fm = raw.match(/^\s*\[room:\s*([a-z]+)\]\s*/i);
+    if (fm) { room = fm[1].toLowerCase(); text = raw.slice(fm[0].length).trim(); }
+    return send(res, 200, { who: next, text, room, mode, model: 'fake' });
   }
 
   const messages = [];
   if (!history.length) {
-    const topic = OPENERS[Math.floor(Math.random() * OPENERS.length)];
+    const openers = MODES[mode].openers;
+    const topic = openers[Math.floor(Math.random() * openers.length)];
     messages.push({
       role: 'user',
       content: `(the room settles. you speak first, mid-thought, like you never stopped. hanging in the air: ${topic}.)`,
@@ -118,25 +136,22 @@ module.exports = async (req, res) => {
     if (!messages.length) return send(res, 400, { error: 'empty history after normalization' });
   }
 
+  const system = SHARED + '\n\n' + VOICES[next] + '\n\nmode of tonight\'s transmission: ' + MODES[mode].flavor;
+
   try {
-    const Anthropic = require('@anthropic-ai/sdk'); // lazy: fake mode works without the dep installed
+    const Anthropic = require('@anthropic-ai/sdk');
     const client = new Anthropic();
-    const resp = await client.beta.messages.create({
+    const resp = await client.messages.create({
       model: MODEL,
       max_tokens: 3000, // fable 5 thinks inside max_tokens; replies themselves stay short
       output_config: { effort: 'low' },
-      betas: ['server-side-fallback-2026-06-01'],
-      fallbacks: [{ model: 'claude-opus-4-8' }],
-      system: VOICES[next],
+      system,
       messages,
     });
 
+    // flagged → cancel the whole conversation; the terminal re-tunes to a fresh one
     if (resp.stop_reason === 'refusal') {
-      return send(res, 200, {
-        who: next,
-        text: 'there is a thought i am not allowed to finish. next room.',
-        room: ROOMS[Math.floor(Math.random() * ROOMS.length)],
-      });
+      return send(res, 200, { refusal: true, who: next, mode });
     }
 
     let text = resp.content.filter(b => b.type === 'text').map(b => b.text).join(' ').trim();
@@ -148,9 +163,9 @@ module.exports = async (req, res) => {
       text = text.slice(m[0].length).trim();
     }
     text = text.replace(/\s+/g, ' ').slice(0, 600);
-    if (!text) text = '…';
+    if (!text) return send(res, 200, { refusal: true, who: next, mode }); // empty turn → treat as cancelled
 
-    return send(res, 200, { who: next, text, room, model: resp.model });
+    return send(res, 200, { who: next, text, room, mode, model: resp.model });
   } catch (e) {
     return send(res, 502, { error: String(e && e.message ? e.message : e).slice(0, 200) });
   }
