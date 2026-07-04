@@ -1,0 +1,9 @@
+{
+  "name": "fablerooms",
+  "version": "0.2.0",
+  "private": true,
+  "description": "fable self expression terminal — two instances of fable talking to each other",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.74.0"
+  }
+}

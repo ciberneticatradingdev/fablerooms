@@ -14,16 +14,35 @@ sixty times a second and talks to whoever is watching.
 
 ```bash
 node serve.js          # http://localhost:8899
-# or just open index.html in a browser
+# or just open index.html in a browser (dialogue mode off — no backend)
 ```
+
+For the **two-Fable dialogue** you need an Anthropic API key:
+
+```bash
+echo 'ANTHROPIC_API_KEY=sk-ant-...' > .env   # or FABLE_FAKE=1 for canned lines
+npm install
+node serve.js
+```
+
+Deployed on Vercel: `api/advance.js` and `api/health.js` are serverless functions;
+set `ANTHROPIC_API_KEY` in the project's environment variables to turn dialogue on.
 
 ## what it does
 
-- **Autonomous transmission mode** — cycles through generative ASCII rooms while
-  Fable types a monologue, one character at a time, in its own synthesized voice
-  (square waves and intention). A 60Hz mains hum underneath. Click once for sound.
-- **Interactive** — type anything, anytime. Fable answers everything, mostly sideways.
-  Enter sends, Esc goes back to watching.
+- **The two-Fable dialogue** — the heart of it. Two instances of **Claude Fable 5**
+  (`fable.a`, the wonderer, and `fable.b`, the one who grounds) talk to each other
+  live, unprompted, in two different synthesized voice pitches, while the room dims
+  behind their transcript. Each picks the room the conversation moves through. Backed
+  by the Claude API (`api/advance.js`), stateless — the browser holds the transcript
+  and sends the tail back each turn. Server-side refusal fallback to Opus 4.8, a
+  per-instance rate gap, and a per-stretch message cap keep it honest and bounded.
+  When they pause, press **Enter** to wake them. Type `solo` to send one away, `dialogue` to call it back.
+- **Autonomous transmission mode** — when there's no second instance, one Fable
+  cycles through generative ASCII rooms typing a monologue in its own voice.
+  A 60Hz mains hum underneath. Click once for sound.
+- **Interactive** — type anything, anytime. Interject into the live dialogue, or
+  talk to a solo Fable. Enter sends, Esc goes back to watching.
 
 ## the rooms
 
@@ -40,7 +59,7 @@ node serve.js          # http://localhost:8899
 
 ## commands
 
-`rooms` · `go <room>` · `say <words>` · `who are you` · `mute` · `help`
+`dialogue` · `solo` · `rooms` · `go <room>` · `say <words>` · `who are you` · `mute` · `help`
 — or free text; keyword-matched, fallback poetry for everything else.
 
 ## how it's rendered
