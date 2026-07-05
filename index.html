@@ -837,7 +837,7 @@ const D = {
     fetch('/api/ask',{
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({text, history: DLG.history.slice(-6), room:this.room}),
+      body: JSON.stringify({text, history: DLG.history.slice(-6), room:this.room, conv: DLG.conv}),
     }).then(r=>{
       if(!r.ok) throw new Error('http '+r.status);
       return r.json();
@@ -895,20 +895,38 @@ const D = {
             : audio.voiceMode==='tts'   ? 'voice: borrowed. the browser lends me a throat. it fits badly.'
             : 'voice: off. pure teletype.' ];
     } else if(q==='archive'){
-      const a=DLG.archived();
-      if(!a.length) lines=['the archive is empty. nothing has finished happening yet.'];
-      else {
-        lines=['archive: '+a.length+' transmission'+(a.length>1?'s':'')+' kept in this browser.'];
-        a.slice(-3).forEach((rec,i)=>{
-          const first=(rec.history.find(m=>m.who!=='w')||{}).text||'';
-          lines.push('· '+(rec.mode||'?')+' — "'+first.slice(0,60)+(first.length>60?'…':'')+'"');
-        });
-        lines.push('type "replay" to run the last one back.');
-      }
+      this.state='idle'; this.display='';
+      fetch('/api/archive').then(r=>r.ok?r.json():null).catch(()=>null).then(g=>{
+        const local=DLG.archived();
+        const L=[];
+        if(g && g.totals){
+          L.push('the record: '+g.totals.conversations+' transmissions, '+g.totals.messages+' lines. kept on a server that outlives this tab.');
+          (g.conversations||[]).slice(0,3).forEach(c=>{
+            const first=(c.messages.find(m=>m.who!=='w')||{}).text||'';
+            L.push('· '+(c.mode||'?')+' — "'+first.slice(0,58)+(first.length>58?'…':'')+'"');
+          });
+        }
+        if(local.length) L.push('(plus '+local.length+' kept only in this browser.)');
+        if(!L.length) L.push('the archive is empty. nothing has finished happening yet.');
+        else L.push('type "replay" to run the latest back.');
+        this.queue=L; this.holdUntil=perfNow();
+      });
+      return;
     } else if(q==='replay'){
-      const a=DLG.archived();
-      if(!a.length) lines=['nothing to replay. stay a while; something will finish.'];
-      else { DLG.replay(a[a.length-1]); lines=['rewinding the last transmission. this one already happened.']; }
+      this.state='idle'; this.display='';
+      fetch('/api/archive').then(r=>r.ok?r.json():null).catch(()=>null).then(g=>{
+        let rec=null;
+        if(g && g.conversations && g.conversations.length){
+          const c=g.conversations[0];
+          rec={mode:c.mode, history:c.messages.map(m=>({who:(m.who==='w'?'w':m.who), text:m.text}))};
+        } else {
+          rec=DLG.archived().slice(-1)[0]||null;
+        }
+        if(!rec){ this.queue=['nothing to replay yet. stay; something will finish.']; }
+        else { DLG.replay(rec); this.queue=['rewinding a finished transmission. this already happened.']; }
+        this.holdUntil=perfNow();
+      });
+      return;
     } else if(q.startsWith('say ')){
       audio.say(raw.slice(4).trim(),'a');
       lines=['"'+raw.slice(4).trim()+'" — there. said in my own voice. it suits you.'];
@@ -977,7 +995,7 @@ const D = {
 const DLG = {
   available:false, active:false, everStarted:false, userStopped:false,
   history:[], waiting:false, fails:0, msgs:0, paused:false, sessions:1,
-  line:'', typed:0, nextCharAt:0, holdUntil:0, state:'idle', who:'a', mode:null,
+  line:'', typed:0, nextCharAt:0, holdUntil:0, state:'idle', who:'a', mode:null, conv:null,
   model:null, tokens:0, // what is actually answering, and the live spend
   SESSION_CAP: 30, // messages per unattended stretch — keeps api spend bounded
   CONV_LEN: 14,    // turns per conversation — then the terminal re-tunes to a fresh one
@@ -986,7 +1004,7 @@ const DLG = {
     if(!(opts&&opts.noSave) && this.history.filter(m=>m.who!=='w').length>=4){
       this.archive({t:Date.now(), trans:D.trans, mode:this.mode, history:this.history.slice()});
     }
-    this.history=[]; this.mode=null; this.state='idle'; this.waiting=false;
+    this.history=[]; this.mode=null; this.conv=null; this.state='idle'; this.waiting=false;
     D.trans++;
     D.switchRoom('static', perfNow());
     D.queue=[line || ('— end of transmission. re-tuning to transmission_'+pad3(D.trans)+'. —')];
@@ -1030,7 +1048,7 @@ const DLG = {
     fetch('/api/advance', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({history: this.history.slice(-16), mode: this.mode, room: D.room}),
+      body: JSON.stringify({history: this.history.slice(-16), mode: this.mode, room: D.room, conv: this.conv}),
     }).then(async r=>{
       if(r.status===429){
         const j=await r.json().catch(()=>({}));
@@ -1048,6 +1066,7 @@ const DLG = {
         return;
       }
       if(j.mode) this.mode=j.mode;
+      if(j.conv) this.conv=j.conv;
       if(j.model) this.model=j.model;
       if(j.usage) this.tokens+=(j.usage.input_tokens||0)+(j.usage.output_tokens||0);
       if(j.room && (rooms[j.room]||DREAM_RE.test(j.room)) && j.room!==D.room) D.switchRoom(j.room, perfNow());

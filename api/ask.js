@@ -89,6 +89,19 @@ module.exports = async (req, res) => {
     out = out.replace(/\s+/g, ' ').slice(0, 600);
     if (!out) out = '…';
 
+    // record the exchange in the railway archive
+    try {
+      const db = require('./_db.js');
+      const conv = (typeof body.conv === 'string' && /^[a-z0-9-]{8,40}$/.test(body.conv))
+                 ? body.conv : 'ask-' + require('crypto').randomUUID();
+      await db.logMessage({ conv, mode: 'ASK', who: 'w', room, body: text });
+      await db.logMessage({
+        conv, mode: 'ASK', who: 'a', room: outRoom || room, body: out, model: resp.model,
+        input_tokens: resp.usage && resp.usage.input_tokens,
+        output_tokens: resp.usage && resp.usage.output_tokens,
+      });
+    } catch (e) { /* ledger is best-effort */ }
+
     return send(res, 200, {
       text: out, room: outRoom, model: resp.model,
       usage: resp.usage ? { input_tokens: resp.usage.input_tokens, output_tokens: resp.usage.output_tokens } : null,

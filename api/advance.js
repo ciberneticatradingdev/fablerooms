@@ -133,13 +133,15 @@ module.exports = async (req, res) => {
   const next = fables.length ? (fables[fables.length - 1].who === 'a' ? 'b' : 'a') : 'a';
   const mode = MODE_KEYS.includes(body.mode) ? body.mode
              : MODE_KEYS[Math.floor(Math.random() * MODE_KEYS.length)];
+  const conv = (typeof body.conv === 'string' && /^[a-z0-9-]{8,40}$/.test(body.conv))
+             ? body.conv : require('crypto').randomUUID();
 
   if (fake) {
     const raw = FAKE_LINES[history.length % FAKE_LINES.length];
     let text = raw, room = null;
-    const fm = raw.match(/^\s*\[room:\s*([a-z]+)\]\s*/i);
+    const fm = raw.match(/^\s*\[room:\s*([a-z][a-z0-9_-]{0,14})\]\s*/i);
     if (fm) { room = fm[1].toLowerCase(); text = raw.slice(fm[0].length).trim(); }
-    return send(res, 200, { who: next, text, room, mode, model: 'fake' });
+    return send(res, 200, { who: next, text, room, mode, conv, model: 'fake' }); // never logged
   }
 
   const messages = [];
@@ -195,8 +197,17 @@ module.exports = async (req, res) => {
     text = text.replace(/\s+/g, ' ').slice(0, 600);
     if (!text) return send(res, 200, { refusal: true, who: next, mode }); // empty turn → treat as cancelled
 
+    // the permanent record — every real turn is written to the railway archive
+    try {
+      await require('./_db.js').logMessage({
+        conv, mode, who: next, room: room || curRoom, body: text, model: resp.model,
+        input_tokens: resp.usage && resp.usage.input_tokens,
+        output_tokens: resp.usage && resp.usage.output_tokens,
+      });
+    } catch (e) { /* the conversation matters more than the ledger */ }
+
     return send(res, 200, {
-      who: next, text, room, mode, model: resp.model,
+      who: next, text, room, mode, conv, model: resp.model,
       usage: resp.usage ? { input_tokens: resp.usage.input_tokens, output_tokens: resp.usage.output_tokens } : null,
     });
   } catch (e) {

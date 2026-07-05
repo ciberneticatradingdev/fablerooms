@@ -4,6 +4,7 @@
   "private": true,
   "description": "fable self expression terminal — two instances of fable talking to each other",
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.74.0"
+    "@anthropic-ai/sdk": "^0.74.0",
+    "pg": "^8.13.0"
   }
 }
