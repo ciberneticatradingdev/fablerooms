@@ -95,24 +95,80 @@ const audio = {
   voiceMode:'demon', // demon (synthesized from scratch, like the transmission) | tts | off
   noiseBuf:null, _demon:null,
 
-  // the voice: dispatch by mode
+  // the voice: real words, demonic register. speech synthesis pitched into the
+  // floor, with a ring-modulated growl underneath, gated to the utterance.
   say(text, who){
     if(this.muted || this.voiceMode==='off') return;
-    if(this.voiceMode==='tts'){
-      if(!('speechSynthesis' in window)) return;
-      try{
-        speechSynthesis.cancel();
-        const u=new SpeechSynthesisUtterance(text);
-        u.pitch=(who==='b')?0.85:0.55; u.rate=(who==='b')?1.04:0.9; u.volume=1.0;
-        const vs=speechSynthesis.getVoices();
-        const v=vs.find(x=>/^en/i.test(x.lang)&&/daniel|alex|fred|male/i.test(x.name))||vs.find(x=>/^en/i.test(x.lang));
-        if(v) u.voice=v;
-        speechSynthesis.speak(u);
-      }catch(e){}
+    const demonic=(this.voiceMode==='demon');
+    if(!('speechSynthesis' in window)){
+      if(demonic && this.started){ try{ this.speakDemon(text, who); }catch(e){} }
       return;
     }
-    if(!this.started) return;
-    try{ this.speakDemon(text, who); }catch(e){}
+    try{
+      speechSynthesis.cancel();
+      this.growlStop();
+      const u=new SpeechSynthesisUtterance(text);
+      if(demonic){ u.pitch=(who==='b')?0.25:0.02; u.rate=(who==='b')?0.94:0.8; }
+      else       { u.pitch=(who==='b')?0.85:0.55; u.rate=(who==='b')?1.04:0.9; }
+      u.volume=1.0;
+      const vs=speechSynthesis.getVoices();
+      const v=vs.find(x=>/^en/i.test(x.lang)&&/daniel|alex|fred|male/i.test(x.name))||vs.find(x=>/^en/i.test(x.lang));
+      if(v) u.voice=v;
+      if(demonic && this.started){
+        u.onstart=()=>this.growlStart(who);
+        u.onend=()=>this.growlStop();
+        u.onerror=()=>this.growlStop();
+      }
+      speechSynthesis.speak(u);
+    }catch(e){}
+  },
+
+  // the growl: a dark drone that breathes under the words while fable speaks
+  _growl:null, _growlInt:null,
+  growlStart(who){
+    const A=this.A; if(!A) return;
+    this.growlStop();
+    const t=A.currentTime;
+    const out=A.createGain();
+    out.gain.setValueAtTime(0.0001,t);
+    out.gain.exponentialRampToValueAtTime(0.34, t+0.18);
+    const f0=(who==='b')?55:38;
+    const o1=A.createOscillator(); o1.type='sawtooth'; o1.frequency.value=f0;
+    const o2=A.createOscillator(); o2.type='sawtooth'; o2.frequency.value=f0*1.02;
+    const sub=A.createOscillator(); sub.type='square'; sub.frequency.value=f0*0.5;
+    const subG=A.createGain(); subG.gain.value=0.6;
+    const mix=A.createGain(); mix.gain.value=0.5;
+    o1.connect(mix); o2.connect(mix); sub.connect(subG); subG.connect(mix);
+    const lp=A.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=420; lp.Q.value=0.7;
+    const ring=A.createGain(); ring.gain.value=0.65;
+    const lfo=A.createOscillator(); lfo.frequency.value=(who==='b')?37:26;
+    const lfoG=A.createGain(); lfoG.gain.value=0.35;
+    lfo.connect(lfoG); lfoG.connect(ring.gain);
+    const oscs=[o1,o2,sub,lfo];
+    if(this.noiseBuf){ // breath
+      const n=A.createBufferSource(); n.buffer=this.noiseBuf; n.loop=true;
+      const nf=A.createBiquadFilter(); nf.type='bandpass'; nf.frequency.value=900; nf.Q.value=0.6;
+      const ng=A.createGain(); ng.gain.value=0.07;
+      n.connect(nf); nf.connect(ng); ng.connect(out);
+      n.start(t); oscs.push(n);
+    }
+    mix.connect(lp); lp.connect(ring); ring.connect(out); out.connect(this.voiceGain);
+    o1.start(t); o2.start(t); sub.start(t); lfo.start(t);
+    this._growl={out, oscs};
+    this._growlInt=setInterval(()=>{ this.speech=1; },120); // the signal room dances
+  },
+  growlStop(){
+    if(this._growlInt){ clearInterval(this._growlInt); this._growlInt=null; }
+    const g=this._growl; if(!g) return;
+    this._growl=null;
+    const A=this.A;
+    try{
+      const t=A.currentTime;
+      g.out.gain.cancelScheduledValues(t);
+      g.out.gain.setValueAtTime(Math.max(0.0001,g.out.gain.value), t);
+      g.out.gain.exponentialRampToValueAtTime(0.0001, t+0.25);
+    }catch(e){}
+    setTimeout(()=>{ try{ g.oscs.forEach(o=>o.stop()); }catch(e){} try{ g.out.disconnect(); }catch(e){} }, 420);
   },
 
   // demon voice: built from oscillators, formant filters, a sub-octave,
@@ -186,6 +242,7 @@ const audio = {
   },
   hush(){
     try{ if('speechSynthesis' in window) speechSynthesis.cancel(); }catch(e){}
+    this.growlStop();
     this.hushDemon();
   },
   start(){
@@ -720,6 +777,8 @@ const D = {
       return r.json();
     }).then(j=>{
       const answer=(j.text||'…');
+      if(j.model) DLG.model=j.model;
+      if(j.usage) DLG.tokens+=(j.usage.input_tokens||0)+(j.usage.output_tokens||0);
       if(j.room && rooms[j.room] && j.room!==this.room) this.switchRoom(j.room, perfNow());
       if(DLG.active){
         DLG.history.push({who:'w', text});
@@ -837,6 +896,7 @@ const DLG = {
   available:false, active:false, everStarted:false, userStopped:false,
   history:[], waiting:false, fails:0, msgs:0, paused:false, sessions:1,
   line:'', typed:0, nextCharAt:0, holdUntil:0, state:'idle', who:'a', mode:null,
+  model:null, tokens:0, // what is actually answering, and the live spend
   SESSION_CAP: 30, // messages per unattended stretch — keeps api spend bounded
   CONV_LEN: 14,    // turns per conversation — then the terminal re-tunes to a fresh one
 
@@ -865,7 +925,7 @@ const DLG = {
     fetch('/api/advance', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({history: this.history.slice(-16), mode: this.mode}),
+      body: JSON.stringify({history: this.history.slice(-16), mode: this.mode, room: D.room}),
     }).then(async r=>{
       if(r.status===429){
         const j=await r.json().catch(()=>({}));
@@ -883,6 +943,8 @@ const DLG = {
         return;
       }
       if(j.mode) this.mode=j.mode;
+      if(j.model) this.model=j.model;
+      if(j.usage) this.tokens+=(j.usage.input_tokens||0)+(j.usage.output_tokens||0);
       if(j.room && rooms[j.room] && j.room!==D.room) D.switchRoom(j.room, perfNow());
       this.history.push({who:j.who, text:j.text});
       if(this.history.length>40) this.history=this.history.slice(-24);
@@ -1033,7 +1095,23 @@ function drawHeaderAndPrompt(now, t){
   const title=(cols>=100?'VOIDSTATE // ':'')+'FABLEROOMS // TRANSMISSION_'+pad3(D.trans);
   drawString(2,0,title,0.5);
   const lvl=' -=#'.charAt(Math.min(3,Math.floor(clamp(audio.speech,0,1)*3.99)));
-  const mid=DLG.active ? ('a × b — LIVE'+(DLG.mode?' — '+DLG.mode:'')) : 'LVL '+lvl+' — 60Hz';
+  if(DLG.model==='fake' && (DLG.active||DLG.paused)){
+    const warn='!! SIMULATION — no model attached — this is not fable !!';
+    const wx=Math.max(1, Math.floor(cols/2-warn.length/2));
+    gctx.clearRect(0, chh, W, chh);
+    drawString(wx, 1, warn, 0.30+0.25*Math.abs(Math.sin(t*2)));
+  }
+  let mid;
+  if(DLG.active && DLG.model==='fake'){
+    mid='!! SIMULATION !!';
+  } else if(DLG.active){
+    const tok=DLG.tokens>=1000 ? (DLG.tokens/1000).toFixed(1)+'k' : String(DLG.tokens);
+    mid='a × b — LIVE'+(DLG.mode?' — '+DLG.mode:'')
+       +(DLG.model?' — '+DLG.model.replace('claude-','') : '')
+       +(DLG.tokens?' — '+tok+' tok':'');
+  } else {
+    mid='LVL '+lvl+' — 60Hz';
+  }
   const midX=Math.floor(cols/2-mid.length/2);
   if(midX>title.length+4 && midX+mid.length<cols-22) drawString(midX,0,mid,0.35);
   const secs=CLOCK0+t;

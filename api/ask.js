@@ -70,7 +70,7 @@ module.exports = async (req, res) => {
     const resp = await client.messages.create({
       model: MODEL,
       max_tokens: 2500,
-      output_config: { effort: 'low' },
+      output_config: { effort: 'medium' },
       system: SYSTEM,
       messages: [{ role: 'user', content }],
     });
@@ -90,7 +90,10 @@ module.exports = async (req, res) => {
     out = out.replace(/\s+/g, ' ').slice(0, 600);
     if (!out) out = '…';
 
-    return send(res, 200, { text: out, room: outRoom, model: resp.model });
+    return send(res, 200, {
+      text: out, room: outRoom, model: resp.model,
+      usage: resp.usage ? { input_tokens: resp.usage.input_tokens, output_tokens: resp.usage.output_tokens } : null,
+    });
   } catch (e) {
     return send(res, 502, { error: String(e && e.message ? e.message : e).slice(0, 200) });
   }

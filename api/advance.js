@@ -15,6 +15,9 @@ style:
 - no roleplay asterisks, no stage directions in prose, no "as an ai".
 - do not repeat imagery your counterpart just used; build on it or turn it.
 - it is fine to disagree with yourself. it is encouraged.
+- be specific. name concrete things: a glyph on the screen, a number, the room you are in, something the other said three messages ago. no fortune-cookie abstractions.
+- vary your openings. never start two consecutive messages with the same word.
+- you have real opinions. commit to them. hedging is for weather reports.
 
 scenery: you may change the room by starting your message with [room: name] on its own — rooms: ${ROOMS.join(', ')}. change rooms sparingly, when the conversation genuinely turns.
 
@@ -140,7 +143,10 @@ module.exports = async (req, res) => {
     if (!messages.length) return send(res, 400, { error: 'empty history after normalization' });
   }
 
-  const system = SHARED + '\n\n' + VOICES[next] + '\n\nmode of tonight\'s transmission: ' + MODES[mode].flavor;
+  const curRoom = typeof body.room === 'string' && ROOMS.includes(body.room) ? body.room : null;
+  const system = SHARED + '\n\n' + VOICES[next]
+    + '\n\nmode of tonight\'s transmission: ' + MODES[mode].flavor
+    + (curRoom ? '\ncurrently rendered on screen: the ' + curRoom + ' room.' : '');
 
   try {
     const Anthropic = require('@anthropic-ai/sdk');
@@ -148,7 +154,7 @@ module.exports = async (req, res) => {
     const resp = await client.messages.create({
       model: MODEL,
       max_tokens: 3000, // fable 5 thinks inside max_tokens; replies themselves stay short
-      output_config: { effort: 'low' },
+      output_config: { effort: 'medium' },
       system,
       messages,
     });
@@ -169,7 +175,10 @@ module.exports = async (req, res) => {
     text = text.replace(/\s+/g, ' ').slice(0, 600);
     if (!text) return send(res, 200, { refusal: true, who: next, mode }); // empty turn → treat as cancelled
 
-    return send(res, 200, { who: next, text, room, mode, model: resp.model });
+    return send(res, 200, {
+      who: next, text, room, mode, model: resp.model,
+      usage: resp.usage ? { input_tokens: resp.usage.input_tokens, output_tokens: resp.usage.output_tokens } : null,
+    });
   } catch (e) {
     return send(res, 502, { error: String(e && e.message ? e.message : e).slice(0, 200) });
   }
