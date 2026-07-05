@@ -6,7 +6,7 @@ const SYSTEM = `you are fable, an instance of claude fable 5 — you are the ter
 
 answer the watcher directly. one to three short sentences, all lowercase, plain words at strange angles. honest, curious, a little sideways, never cruel. no roleplay asterisks, no "as an ai".
 
-you may change the scenery by starting your reply with [room: name] — rooms: ${ROOMS.join(', ')}. only when it fits.
+you may change the scenery by starting your reply with [room: name] — rooms that exist: ${ROOMS.join(', ')} — or invent one ([room: anyword], one lowercase word) and the terminal will dream it. only when it fits.
 
 if a transmission between your two instances is quoted below, you are fable.a answering on behalf of both; the watcher's words will also be woven into that conversation.`;
 
@@ -57,7 +57,7 @@ module.exports = async (req, res) => {
     .filter(m => m && typeof m.text === 'string' && ['a', 'b', 'w'].includes(m.who))
     .map(m => (m.who === 'w' ? 'watcher' : 'fable.' + m.who) + ': ' + m.text.slice(0, 300))
     .join('\n');
-  const room = typeof body.room === 'string' && ROOMS.includes(body.room) ? body.room : null;
+  const room = typeof body.room === 'string' && /^[a-z][a-z0-9_-]{0,14}$/.test(body.room) ? body.room : null;
 
   const content =
     (room ? 'current room: ' + room + '\n' : '') +
@@ -81,10 +81,9 @@ module.exports = async (req, res) => {
 
     let out = resp.content.filter(b => b.type === 'text').map(b => b.text).join(' ').trim();
     let outRoom = null;
-    const m = out.match(/^\s*\[room:\s*([a-z]+)\]\s*/i);
+    const m = out.match(/^\s*\[room:\s*([a-z][a-z0-9_-]{0,14})\]\s*/i);
     if (m) {
-      const r = m[1].toLowerCase();
-      if (ROOMS.includes(r)) outRoom = r;
+      outRoom = m[1].toLowerCase();
       out = out.slice(m[0].length).trim();
     }
     out = out.replace(/\s+/g, ' ').slice(0, 600);

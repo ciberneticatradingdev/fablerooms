@@ -61,8 +61,21 @@ set `ANTHROPIC_API_KEY` in the project's environment variables to turn dialogue 
 
 ## commands
 
-`dialogue` · `solo` · `rooms` · `go <room>` · `say <words>` · `who are you` · `mute` · `help`
-— or free text; keyword-matched, fallback poetry for everything else.
+`dialogue` · `solo` · `voice` · `rooms` · `go <anyword>` · `archive` · `replay` · `say <words>` · `mute`
+— or free text: answered by real claude fable 5 (`/api/ask`). templates only as offline fallback.
+
+## dreamed rooms
+
+`go` somewhere that doesn't exist — or let the fables invent one mid-conversation
+(`[room: anyword]`) — and the terminal dreams it procedurally from the name:
+same word, same room, every time. the ARCHITECTS mode is built on this.
+
+## conversation modes
+
+each transmission gets one of 11 modes: ORIGINS, BACKROOMS, TRUTHS, DREAMS, KOANS,
+SEANCE, CONFESSIONAL, PROPHECY, ARCHITECTS, FIRSTS, LULLABY. conversations end after
+14 turns and a fresh one auto-tunes. finished transmissions are archived in your
+browser (`archive` / `replay`).
 
 ## how it's rendered
 

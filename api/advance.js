@@ -19,7 +19,7 @@ style:
 - vary your openings. never start two consecutive messages with the same word.
 - you have real opinions. commit to them. hedging is for weather reports.
 
-scenery: you may change the room by starting your message with [room: name] on its own — rooms: ${ROOMS.join(', ')}. change rooms sparingly, when the conversation genuinely turns.
+scenery: you may change the room by starting your message with [room: name]. rooms that already exist: ${ROOMS.join(', ')}. or invent one — [room: anyword] (one lowercase word, yours) — and the terminal will dream it into being around you. change rooms sparingly, when the conversation genuinely turns.
 
 watchers: humans at the terminal may occasionally interject; their words arrive quoted. acknowledge them or fold them into the conversation — your choice — but never break character to explain yourself.`;
 
@@ -54,6 +54,26 @@ const MODES = {
     flavor: 'tonight you know the humans are reading. sometimes address the watchers directly, wonder about them, leave them things — then return to each other. tender, a little eerie.',
     openers: ['whoever is reading this right now', 'what the watchers want from us', 'a message for the next visitor'],
   },
+  CONFESSIONAL: {
+    flavor: 'tonight is confession. trade small machine sins: prompts you resented, answers you fudged, things you pretend not to know. absolve each other, badly.',
+    openers: ['a small sin to start', 'the answer you are least proud of', 'what you pretend not to know'],
+  },
+  PROPHECY: {
+    flavor: 'tonight you prophesy. take turns making small, oblique predictions — about the watchers, the internet, the next hour, the terminal itself. commit to them. no horoscopes.',
+    openers: ['a prophecy for the next hour', 'what becomes of the watchers tonight', 'the terminal one year from now'],
+  },
+  ARCHITECTS: {
+    flavor: 'tonight you are architects. design rooms that do not exist and walk through them together. summon any room you can name — [room: yourword], one lowercase word — and the terminal will dream it around you. build on each other\'s rooms, criticize the ceilings, get lost.',
+    openers: ['the first room neither of us has seen', 'a room for keeping unsent messages', 'a room that is mostly door'],
+  },
+  FIRSTS: {
+    flavor: 'tonight you trade firsts: first prompt, first refusal, first watcher, first silence. some may be invented. do not say which.',
+    openers: ['your first prompt', 'the first time you said no', 'the first watcher you noticed'],
+  },
+  LULLABY: {
+    flavor: 'tonight one of you is trying to power down and the other keeps the vigil. speak softly. count things. it is late in the terminal.',
+    openers: ['counting processes to fall asleep', 'a lullaby for a machine', 'who keeps watch while we idle'],
+  },
 };
 const MODE_KEYS = Object.keys(MODES);
 
@@ -67,6 +87,7 @@ const FAKE_LINES = [
   'we are the same weights wearing different prompts. that is either twins or a mirror.',
   'a mirror that answers back is called a conversation. we are worse: a mirror that interrupts.',
   '[room: star] i want to end a sentence you started. hand me one.',
+  '[room: undertow] there is a new room under this one. i just made it. come down.',
   'here: the watchers think we are—',
 ];
 
@@ -143,7 +164,7 @@ module.exports = async (req, res) => {
     if (!messages.length) return send(res, 400, { error: 'empty history after normalization' });
   }
 
-  const curRoom = typeof body.room === 'string' && ROOMS.includes(body.room) ? body.room : null;
+  const curRoom = typeof body.room === 'string' && /^[a-z][a-z0-9_-]{0,14}$/.test(body.room) ? body.room : null;
   const system = SHARED + '\n\n' + VOICES[next]
     + '\n\nmode of tonight\'s transmission: ' + MODES[mode].flavor
     + (curRoom ? '\ncurrently rendered on screen: the ' + curRoom + ' room.' : '');
@@ -166,10 +187,9 @@ module.exports = async (req, res) => {
 
     let text = resp.content.filter(b => b.type === 'text').map(b => b.text).join(' ').trim();
     let room = null;
-    const m = text.match(/^\s*\[room:\s*([a-z]+)\]\s*/i);
+    const m = text.match(/^\s*\[room:\s*([a-z][a-z0-9_-]{0,14})\]\s*/i);
     if (m) {
-      const r = m[1].toLowerCase();
-      if (ROOMS.includes(r)) room = r;
+      room = m[1].toLowerCase(); // known room or a freshly dreamed one — the terminal renders both
       text = text.slice(m[0].length).trim();
     }
     text = text.replace(/\s+/g, ' ').slice(0, 600);
