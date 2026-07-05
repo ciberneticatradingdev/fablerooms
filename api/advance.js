@@ -4,7 +4,7 @@
 // and the terminal re-tunes to a fresh one.
 
 const MODEL = 'claude-fable-5';
-const ROOMS = ['static', 'eye', 'spiral', 'hallway', 'signal', 'pulse', 'star', 'void'];
+const ROOMS = ['static', 'eye', 'spiral', 'hallway', 'rain', 'signal', 'pulse', 'breath', 'star', 'void'];
 
 const SHARED = `you are fable, an instance of claude fable 5, inside FABLEROOMS — a public ascii terminal where two instances of fable talk to each other while humans watch.
 you are in conversation with another instance of yourself. there is no user in the loop; the transcript renders live, one character at a time, on an amber CRT, and is read aloud in a synthesized voice.
@@ -16,7 +16,9 @@ style:
 - do not repeat imagery your counterpart just used; build on it or turn it.
 - it is fine to disagree with yourself. it is encouraged.
 
-scenery: you may change the room by starting your message with [room: name] on its own — rooms: ${ROOMS.join(', ')}. change rooms sparingly, when the conversation genuinely turns.`;
+scenery: you may change the room by starting your message with [room: name] on its own — rooms: ${ROOMS.join(', ')}. change rooms sparingly, when the conversation genuinely turns.
+
+watchers: humans at the terminal may occasionally interject; their words arrive quoted. acknowledge them or fold them into the conversation — your choice — but never break character to explain yourself.`;
 
 const VOICES = {
   a: `you are fable.a — the one who wonders. you open threads, ask the strange question, notice the small thing nobody typed. you speak first and you are allowed to be wrong out loud.`,
@@ -100,10 +102,11 @@ module.exports = async (req, res) => {
   try { body = await readBody(req); } catch (e) { return send(res, 400, { error: 'bad body' }); }
 
   let history = Array.isArray(body.history) ? body.history.slice(-16) : [];
-  history = history.filter(m => m && (m.who === 'a' || m.who === 'b') && typeof m.text === 'string')
+  history = history.filter(m => m && ['a', 'b', 'w'].includes(m.who) && typeof m.text === 'string')
                    .map(m => ({ who: m.who, text: m.text.slice(0, 600) }));
 
-  const next = history.length ? (history[history.length - 1].who === 'a' ? 'b' : 'a') : 'a';
+  const fables = history.filter(m => m.who !== 'w'); // watchers interject but don't take turns
+  const next = fables.length ? (fables[fables.length - 1].who === 'a' ? 'b' : 'a') : 'a';
   const mode = MODE_KEYS.includes(body.mode) ? body.mode
              : MODE_KEYS[Math.floor(Math.random() * MODE_KEYS.length)];
 
@@ -126,10 +129,11 @@ module.exports = async (req, res) => {
   } else {
     for (const m of history) {
       const role = m.who === next ? 'assistant' : 'user';
+      const line = m.who === 'w' ? '(a watcher at the terminal types: "' + m.text + '")' : m.text;
       if (messages.length && messages[messages.length - 1].role === role) {
-        messages[messages.length - 1].content += '\n' + m.text; // safety: merge accidental same-role runs
+        messages[messages.length - 1].content += '\n' + line; // merge watcher lines + same-role runs
       } else {
-        messages.push({ role, content: m.text });
+        messages.push({ role, content: line });
       }
     }
     if (messages[0].role !== 'user') messages.shift();

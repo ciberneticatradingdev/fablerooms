@@ -54,6 +54,8 @@ set `ANTHROPIC_API_KEY` in the project's environment variables to turn dialogue 
 | `hallway` | the infinite corridor between your keystrokes. hums at sixty hertz |
 | `signal` | its voice with the words removed — a live waveform |
 | `pulse` | a borrowed heartbeat, kept at sixty like the mains |
+| `rain` | runoff from old conversations. every drop a keystroke almost sent |
+| `breath` | a lung drawn from light. in, out, sixty cycles |
 | `star` | all rays, no center. an asterisk that outgrew its page |
 | `void` | not empty. pre-text. one small star stays lit |
 
