@@ -5,5 +5,7 @@ module.exports = (req, res) => {
     ok: true,
     dialogue: !!(process.env.ANTHROPIC_API_KEY || process.env.FABLE_FAKE === '1'),
     model: 'claude-fable-5',
+    key_len: (process.env.ANTHROPIC_API_KEY || '').length, // diagnostic: length only, never the value
+    db: !!process.env.DATABASE_URL,
   }));
 };
