@@ -119,7 +119,7 @@ const MODE_KEYS = Object.keys(MODES);
 
 // one turn of the conversation. history may contain 'w' (watcher) entries.
 // returns {who, text, room, model, usage} or {refusal:true, who}.
-async function generateTurn(client, { history, mode, room, topic: forcedTopic }) {
+async function generateTurn(client, { history, mode, room, topic: forcedTopic, memory, watchers }) {
   const fables = history.filter(m => m.who !== 'w');
   const next = fables.length ? (fables[fables.length - 1].who === 'a' ? 'b' : 'a') : 'a';
 
@@ -145,9 +145,16 @@ async function generateTurn(client, { history, mode, room, topic: forcedTopic })
     if (!messages.length) throw new Error('empty history after normalization');
   }
 
-  const system = SHARED + '\n\n' + VOICES[next]
+  let system = SHARED + '\n\n' + VOICES[next]
     + '\n\nmode of tonight\'s transmission: ' + MODES[mode].flavor
     + (room ? '\ncurrently rendered on screen: the ' + room + ' room.' : '');
+  if (memory && memory.length) {
+    system += '\n\nwhat the record remembers — true fragments from your past transmissions. they really happened. build on them, call back to them when it serves, contradict them if you have changed your mind:\n'
+      + memory.map(m => '- fable.' + m.who + ': ' + m.body).join('\n');
+  }
+  if (typeof watchers === 'number' && watchers > 0) {
+    system += '\n\nright now ' + watchers + ' watcher' + (watchers === 1 ? ' is' : 's are') + ' on the line. you may notice them, or not.';
+  }
 
   const resp = await client.messages.create({
     model: MODEL,

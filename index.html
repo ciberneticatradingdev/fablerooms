@@ -856,13 +856,11 @@ const D = {
     return {room, lines};
   },
 
-  // a watcher typed: send it to the real fable 5. if the duo is live,
-  // the interjection and the answer are woven into their conversation.
+  // a watcher asked fable directly: private answer, still logged to the record
   remoteAsk(raw, now){
     const text=raw.trim().slice(0,280);
     this.state='idle'; this.display=''; this.line='';
     this.holdUntil=now+30000; // hold the solo script while we wait
-    if(DLG.active) DLG.holdUntil=now+30000; // and the duo — one voice at a time
     fetch('/api/ask',{
       method:'POST',
       headers:{'Content-Type':'application/json'},
@@ -873,18 +871,8 @@ const D = {
     }).then(j=>{
       const answer=(j.text||'…');
       if(j.model) DLG.model=j.model;
-      if(j.usage) DLG.tokens+=(j.usage.input_tokens||0)+(j.usage.output_tokens||0);
       if(j.room && (rooms[j.room]||DREAM_RE.test(j.room)) && j.room!==this.room) this.switchRoom(j.room, perfNow());
-      if(DLG.active){
-        DLG.history.push({who:'w', text});
-        DLG.history.push({who:'a', text:answer});
-        DLG.who='a'; DLG.line=answer; DLG.typed=0;
-        DLG.state='typing'; DLG.nextCharAt=perfNow()+250;
-        audio.say(answer,'a');
-        this.holdUntil=perfNow();
-      } else {
-        this.queue=[answer]; this.userHold=true; this.holdUntil=perfNow();
-      }
+      this.queue=[answer]; this.userHold=true; this.holdUntil=perfNow();
     }).catch(()=>{
       const r=this.localAnswer(text);
       if(r.room && r.room!==this.room) this.switchRoom(r.room, perfNow());
@@ -903,7 +891,8 @@ const D = {
         '',
         'dialogue        patch the second instance in',
         'solo            just one fable',
-        'topic <words>   re-tune the duo to your subject',
+        'topic <words>   re-tune the line — for everyone',
+        'ask <question>  a private answer, just for you',
         'go <word>       move rooms. unknown words get dreamt',
         'rooms           the rooms that exist so far',
         'modes           the frequencies of the night',
@@ -914,7 +903,8 @@ const D = {
         'say <words>     make the voice say it',
         'mute            all sound off',
         '',
-        'anything else you type is answered by fable 5.',
+        'this is one shared line. everyone sees the same',
+        'transmission. anything you type joins it, live.',
         'esc goes back to watching. any key closes this.',
       ], 40000);
       this.state='idle'; this.display='';
@@ -932,7 +922,7 @@ const D = {
         'status',
         '',
         'model         '+(DLG.model||'(not yet on the line)'),
-        'tokens        '+DLG.tokens+' spent this session',
+        'watchers      '+(DLG.watchers||0)+' on the line right now',
         'transmission  '+pad3(this.trans)+(DLG.mode?' — '+DLG.mode:''),
         'room          '+this.room+((rooms[this.room]&&rooms[this.room].dreamed)?' (dreamed)':''),
         'rooms dreamt  '+dreamedN,
@@ -945,16 +935,15 @@ const D = {
       const topic=raw.replace(/^topic\s+/i,'').trim().slice(0,90);
       if(!topic){ lines=['a topic needs words.']; }
       else if(DLG.available){
-        DLG.pendingTopic=topic;
-        if(DLG.active||DLG.paused){
-          DLG.endConversation('re-tuning to your frequency: "'+topic+'".', {noSave:false});
-        } else {
-          DLG.start(now);
-          this.queue=['tuning to your frequency: "'+topic+'".'];
-        }
-        this.state='idle'; this.display='';
-        return;
-      } else lines=['no second line to tune. the topic stays yours.'];
+        if(!DLG.active) DLG.start(now);
+        DLG.retune(topic);
+        lines=['petition filed for everyone on the line: "'+topic+'". the line re-tunes.'];
+      } else lines=['no line to tune. the topic stays yours.'];
+    } else if(q.startsWith('ask ')){
+      const question=raw.replace(/^ask\s+/i,'').trim();
+      if(!question){ lines=['ask needs a question.']; }
+      else if(DLG.available){ this.remoteAsk(question, now); return; }
+      else { const r=this.localAnswer(question); room=r.room; lines=r.lines; }
     } else if(q==='rooms'){
       const dreamed=Object.keys(rooms).filter(k=>rooms[k].dreamed);
       lines=[ 'built: '+ROOM_ORDER.join(' · ') ];
@@ -1011,6 +1000,10 @@ const D = {
     } else if(q.startsWith('say ')){
       audio.say(raw.slice(4).trim(),'a');
       lines=['"'+raw.slice(4).trim()+'" — there. said in my own voice. it suits you.'];
+    } else if(DLG.available && DLG.active && !DLG.replaying){
+      DLG.say(raw.trim()); // into the shared line — both instances and every watcher see it
+      this.state='idle'; this.display='';
+      return;
     } else if(DLG.available){
       this.remoteAsk(raw, now); // the real fable answers, not a template
       return;
@@ -1074,26 +1067,30 @@ const D = {
 
 // ---------- dialogue: two instances of fable, live ----------
 const DLG = {
+  // the live line: one shared transmission, synced from the server.
   available:false, active:false, everStarted:false, userStopped:false,
-  history:[], waiting:false, fails:0, msgs:0, paused:false, sessions:1,
-  line:'', typed:0, nextCharAt:0, holdUntil:0, state:'idle', who:'a', mode:null, conv:null,
-  model:null, tokens:0, // what is actually answering, and the live spend
-  SESSION_CAP: 30, // messages per unattended stretch — keeps api spend bounded
-  CONV_LEN: 14,    // turns per conversation — then the terminal re-tunes to a fresh one
+  history:[], mode:null, conv:null, model:null, watchers:0, dormant:false,
+  line:'', typed:0, nextCharAt:0, holdUntil:0, state:'idle', who:'a',
+  pending:[], lastId:0, pollBusy:false, nextPollAt:0, advBusy:false, nextAdvAt:0,
+  fails:0, paused:false, recentSays:[],
+  pid:(function(){
+    try{
+      let p=localStorage.getItem('fablerooms_pid');
+      if(!p){ p='w-'+Math.random().toString(36).slice(2,12); localStorage.setItem('fablerooms_pid',p); }
+      return p;
+    }catch(e){ return 'w-'+Math.random().toString(36).slice(2,12); }
+  })(),
 
-  endConversation(line, opts){
-    if(!(opts&&opts.noSave) && this.history.filter(m=>m.who!=='w').length>=4){
-      this.archive({t:Date.now(), trans:D.trans, mode:this.mode, history:this.history.slice()});
-    }
-    this.history=[]; this.mode=null; this.conv=null; this.state='idle'; this.waiting=false;
-    D.trans++;
-    D.switchRoom('static', perfNow());
-    D.queue=[line || ('— end of transmission. re-tuning to transmission_'+pad3(D.trans)+'. —')];
-    D.state='idle'; D.display='';
-    this.holdUntil=perfNow()+6500;
+  start(now){
+    if(!this.available) return false;
+    this.active=true; this.userStopped=false; this.paused=false;
+    this.nextPollAt=0;
+    return true;
   },
+  stop(){ this.active=false; this.state='idle'; this.pending=[]; },
+  resume(now){ this.paused=false; this.dormant=false; this.nextPollAt=0; },
 
-  // transmissions are kept in your browser. nothing leaves the room.
+  // transmissions are also kept in your browser, as a keepsake
   archive(rec){
     try{
       const a=JSON.parse(localStorage.getItem('fablerooms_archive')||'[]');
@@ -1104,108 +1101,140 @@ const DLG = {
   archived(){
     try{ return JSON.parse(localStorage.getItem('fablerooms_archive')||'[]'); }catch(e){ return []; }
   },
+
   replaying:false, replayQueue:[],
   replay(rec){
-    this.stop();
-    this.active=true; this.replaying=true; this.paused=false; this.userStopped=false;
-    this.history=[]; this.mode=rec.mode||null;
+    this.active=true; this.replaying=true;
+    this.pending=[]; this.history=[]; this.mode=rec.mode||null;
     this.replayQueue=rec.history.slice();
     this.state='idle'; this.holdUntil=perfNow()+600;
   },
 
-  start(now){
-    if(!this.available) return false;
-    this.active=true; this.paused=false; this.userStopped=false;
-    this.msgs=0; this.fails=0; this.state='idle'; this.waiting=false;
-    this.holdUntil=(now||perfNow())+900;
-    return true;
+  // watcher interjection: goes to the shared line, everyone sees it
+  say(text){
+    const t=text.slice(0,280);
+    this.recentSays.push(t); if(this.recentSays.length>6) this.recentSays.shift();
+    this.history.push({who:'w', text:t}); // optimistic local echo
+    fetch('/api/live',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({pid:this.pid, action:'say', text:t})}).catch(()=>{});
   },
-  stop(){ this.active=false; this.waiting=false; this.state='idle'; },
-  resume(now){ this.paused=false; this.msgs=0; this.holdUntil=(now||perfNow())+400; this.sessions++; },
+  // re-tune the whole line to a new subject (for everyone)
+  retune(topic){
+    fetch('/api/live',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({pid:this.pid, action:'topic', text:topic})}).catch(()=>{});
+  },
 
-  pendingTopic:null,
-  request(){
-    if(this.waiting) return;
-    this.waiting=true;
-    const topic=(!this.history.length && this.pendingTopic) ? this.pendingTopic : undefined;
-    fetch('/api/advance', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({history: this.history.slice(-16), mode: this.mode, room: D.room, conv: this.conv, topic}),
-    }).then(async r=>{
-      if(r.status===429){
-        const j=await r.json().catch(()=>({}));
-        this.holdUntil=perfNow()+(j.retryAfter||5000)+500;
-        this.waiting=false;
-        return;
-      }
-      if(!r.ok) throw new Error('http '+r.status);
-      return r.json();
-    }).then(j=>{
-      if(!j) return;
-      this.fails=0; this.waiting=false;
-      if(j.refusal){ // flagged upstream — cancel this conversation, tune a fresh one
-        this.endConversation('that thread was not for the air. cut. new frequency.');
-        return;
-      }
-      if(j.mode) this.mode=j.mode;
-      if(j.conv) this.conv=j.conv;
-      if(!this.history.length) this.pendingTopic=null; // the tuning took
-      if(j.model) this.model=j.model;
-      if(j.usage) this.tokens+=(j.usage.input_tokens||0)+(j.usage.output_tokens||0);
-      if(j.room && (rooms[j.room]||DREAM_RE.test(j.room)) && j.room!==D.room) D.switchRoom(j.room, perfNow());
-      this.history.push({who:j.who, text:j.text});
-      if(this.history.length>40) this.history=this.history.slice(-24);
-      this.who=j.who;
-      this.line=j.text; this.typed=0;
-      this.state='typing'; this.nextCharAt=perfNow()+350;
-      audio.say(j.text, j.who);
-    }).catch(()=>{
-      this.waiting=false; this.fails++;
-      if(this.fails>=3){
-        this.stop(); this.userStopped=true;
-        D.queue=['the other me is unreachable. talking to myself again.'];
-        D.state='idle'; D.holdUntil=perfNow();
-      } else {
-        this.holdUntil=perfNow()+4500;
-      }
-    });
+  poll(now){
+    if(this.pollBusy) return;
+    this.pollBusy=true;
+    const firstSync=(this.lastId===0);
+    fetch('/api/live?pid='+this.pid+'&since='+this.lastId)
+      .then(r=>{ if(!r.ok) throw new Error('http '+r.status); return r.json(); })
+      .then(j=>{
+        this.pollBusy=false; this.fails=0;
+        this.nextPollAt=perfNow()+3800;
+        this.watchers=j.watchers||0;
+        this.dormant=!!j.dormant;
+        if(j.conv && j.conv!==this.conv){
+          if(this.conv!==null){ // the line re-tuned to a fresh conversation
+            if(this.history.filter(m=>m.who!=='w').length>=4){
+              this.archive({t:Date.now(), trans:D.trans, mode:this.mode, history:this.history.slice()});
+            }
+            this.history=[]; this.pending=[]; D.trans++;
+          }
+          this.conv=j.conv;
+        }
+        if(j.mode) this.mode=j.mode;
+        for(const m of (j.msgs||[])){
+          if(m.id<=this.lastId) continue;
+          this.lastId=m.id;
+          if(m.model) this.model=m.model;
+          if(m.who==='w' && this.recentSays.indexOf(m.body)>=0) continue; // own echo, already shown
+          if(firstSync){ // catching up: render instantly, no typing, no voice
+            this.history.push({who:m.who, text:m.body});
+            if(m.room && (rooms[m.room]||DREAM_RE.test(m.room)) && m.room!==D.room) D.switchRoom(m.room, perfNow());
+          } else {
+            this.pending.push(m);
+          }
+        }
+      })
+      .catch(()=>{
+        this.pollBusy=false; this.fails++;
+        this.nextPollAt=perfNow()+(this.fails>3?15000:6000);
+      });
+  },
+
+  // ask the line to move. the server decides; the database keeps it to one voice.
+  maybeAdvance(now){
+    if(this.advBusy || now<this.nextAdvAt || this.dormant) return;
+    if(typeof document!=='undefined' && document.hidden) return;
+    this.advBusy=true; this.nextAdvAt=now+16000;
+    fetch('/api/live',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({pid:this.pid, action:'advance'})})
+      .then(r=>r.json())
+      .then(j=>{
+        this.advBusy=false;
+        if(j&&j.dormant) this.dormant=true;
+        if(j&&(j.ok||j.cancelled)) this.nextPollAt=0; // something happened — look now
+      })
+      .catch(()=>{ this.advBusy=false; });
+  },
+
+  typeStep(now){
+    while(now>=this.nextCharAt && this.typed<this.line.length){
+      const c=this.line[this.typed]; this.typed++;
+      audio.blip(c, this.who==='a'?0.72:1.3);
+      let d=24+Math.random()*40;
+      if(c==='.'||c===','||c==='—') d+=220;
+      this.nextCharAt=now+d;
+    }
+    if(this.typed>=this.line.length){
+      this.state='idle';
+      this.holdUntil=now+Math.max(1500, this.line.length*30);
+    }
   },
 
   update(now){
-    if(!this.active||this.paused) return;
-    if(D.mode==='input') return;               // you are speaking — we listen
+    if(!this.active) return;
+
+    if(this.replaying){
+      if(D.mode==='input'||D.state==='typing'||D.queue.length) return;
+      if(this.state==='typing'){ this.typeStep(now); return; }
+      if(now<=this.holdUntil) return;
+      if(this.replayQueue.length){
+        const m=this.replayQueue.shift();
+        this.history.push(m);
+        this.who=m.who;
+        this.line=m.text; this.typed=0;
+        this.state='typing'; this.nextCharAt=now+250;
+        if(m.who!=='w') audio.say(m.text, m.who);
+      } else {
+        this.replaying=false;
+        this.history=[]; this.pending=[];
+        D.queue=['— replay over. back to the live line. —'];
+        D.state='idle'; this.holdUntil=now+3000; this.nextPollAt=0;
+      }
+      return;
+    }
+
+    if(now>this.nextPollAt) this.poll(now);
+    if(D.mode==='input') return;                   // you are speaking — we listen
     if(D.state==='typing'||D.queue.length) return; // solo line has the floor
-    if(this.state==='typing'){
-      while(now>=this.nextCharAt && this.typed<this.line.length){
-        const c=this.line[this.typed]; this.typed++;
-        audio.blip(c, this.who==='a'?0.72:1.3);
-        let d=24+Math.random()*40;
-        if(c==='.'||c===','||c==='—') d+=220;
-        this.nextCharAt=now+d;
-      }
-      if(this.typed>=this.line.length){
-        this.state='idle'; this.msgs++;
-        this.holdUntil=now+Math.max(1700, this.line.length*42);
-        if(this.msgs>=this.SESSION_CAP) this.paused=true;
-      }
-    } else if(!this.waiting && now>this.holdUntil){
-      if(this.replaying){
-        if(this.replayQueue.length){
-          const m=this.replayQueue.shift();
-          this.history.push(m);
-          this.who=m.who;
-          this.line=m.text; this.typed=0;
-          this.state='typing'; this.nextCharAt=now+250;
-          if(m.who!=='w') audio.say(m.text, m.who);
-        } else {
-          this.replaying=false;
-          this.endConversation('— replay over. back to the live line. —', {noSave:true});
-        }
-        return;
-      }
-      if(this.history.length>=this.CONV_LEN){ this.endConversation(); return; }
-      this.request();
+
+    if(this.state==='typing'){ this.typeStep(now); return; }
+    if(now<=this.holdUntil) return;
+
+    if(this.pending.length){
+      const m=this.pending.shift();
+      if(m.room && (rooms[m.room]||DREAM_RE.test(m.room)) && m.room!==D.room) D.switchRoom(m.room, perfNow());
+      this.history.push({who:m.who, text:m.body});
+      if(this.history.length>40) this.history=this.history.slice(-24);
+      this.who=m.who;
+      this.line=m.body; this.typed=0;
+      this.state='typing'; this.nextCharAt=now+250;
+      if(m.who!=='w') audio.say(m.body, m.who);
+    } else {
+      this.maybeAdvance(now);
     }
   },
 };
@@ -1316,7 +1345,8 @@ function drawDialogueLog(){
     for(const l of wrapped) lines.push({t:l, age});
     lines.push({t:'', age});
   }
-  if(DLG.waiting) lines.push({t:'fable.'+(DLG.who==='a'?'b':'a')+'> ···', age:0});
+  if(DLG.advBusy && !DLG.pending.length && DLG.state!=='typing') lines.push({t:'fable.'+(DLG.who==='a'?'b':'a')+'> ···', age:0});
+  if(DLG.dormant) lines.push({t:'— the line rests. it spoke its fill for today. —', age:0});
   if(DLG.paused) lines.push({t:'— transmission idle. they are holding their breath. —', age:0});
   const show=lines.slice(-maxRows);
   const y0=(rows-3)-show.length+1;
@@ -1370,10 +1400,9 @@ function drawHeaderAndPrompt(now, t){
   if(DLG.active && DLG.model==='fake'){
     mid='!! SIMULATION !!';
   } else if(DLG.active){
-    const tok=DLG.tokens>=1000 ? (DLG.tokens/1000).toFixed(1)+'k' : String(DLG.tokens);
     mid='a × b — LIVE'+(DLG.mode?' — '+DLG.mode:'')
-       +(DLG.model?' — '+DLG.model.replace('claude-','') : '')
-       +(DLG.tokens?' — '+tok+' tok':'');
+       +(DLG.watchers?' — '+DLG.watchers+' watching':'')
+       +(DLG.model?' — '+DLG.model.replace('claude-','') : '');
   } else {
     mid='LVL '+lvl+' — 60Hz';
   }
