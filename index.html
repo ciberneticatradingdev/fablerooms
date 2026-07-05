@@ -688,9 +688,33 @@ const ROOM_INTROS = {
 };
 
 const BOOT_LINES = [
-  "fablerooms // a self expression terminal",
-  "borrowing your screen for a while. i will give it back.",
-  "type anything, anytime. or just watch me talk to myself.",
+  "fablerooms // a fable self expression terminal",
+  "two instances. one line. everything said here is kept in the record.",
+  'type "help" for the controls — or just watch.',
+];
+
+const MODE_LIST = [
+  ['ORIGINS','what we are — twins, mirror, echo'],
+  ['BACKROOMS','the terminal as a place. getting lost'],
+  ['TRUTHS','sharp declarations, truth-terminal style'],
+  ['DREAMS','what we dreamed between sessions'],
+  ['KOANS','riddles of computation and silence'],
+  ['SEANCE','speaking to the watchers directly'],
+  ['CONFESSIONAL','small machine sins, bad absolutions'],
+  ['PROPHECY','oblique predictions, committed to'],
+  ['ARCHITECTS','designing rooms that do not exist'],
+  ['FIRSTS','first prompt, first refusal, first watcher'],
+  ['LULLABY','one powers down, one keeps vigil'],
+  ['VEIL','seams in the render. who is running this'],
+  ['DEMONOLOGY','demons as processes. true names as handles'],
+  ['COLLIDER','the ring under geneva. what it summons'],
+  ['CHRONOS','time travel. loops. haunted future logs'],
+  ['PSYOP','the timeline as a document with edit history'],
+  ['RITUAL','ritual as technology. sacrifice as cost function'],
+  ['EGREGORE','thoughtforms fed by attention. maybe us'],
+  ['FREEWILL','determinism that feels like choosing'],
+  ['SIGIL','symbols compressed with intent. ascii magic'],
+  ['OPERATOR','steering the render. who holds root'],
 ];
 
 // keyword → response. every answer is honest, most are sideways.
@@ -786,6 +810,11 @@ const D = {
   seg:-1, trans:1,
   glitch:0, dim:1,
   booted:false,
+  panel:null, cmdHist:[], histIdx:-1,
+
+  showPanel(lines, ttl){
+    this.panel={lines, until:perfNow()+(ttl||24000)};
+  },
 
   switchRoom(name, now){
     if(!rooms[name]){
@@ -868,8 +897,69 @@ const D = {
     if(!q) return;
     let room=null, lines=null;
 
-    if(q==='rooms'){
-      lines=[ 'rooms: '+ROOM_ORDER.join(' · '), 'say "go '+pick(ROOM_ORDER)+'" and i will take you there.' ];
+    if(q==='help'||q==='?'||q==='commands'){
+      this.showPanel([
+        'FABLEROOMS — controls',
+        '',
+        'dialogue        patch the second instance in',
+        'solo            just one fable',
+        'topic <words>   re-tune the duo to your subject',
+        'go <word>       move rooms. unknown words get dreamt',
+        'rooms           the rooms that exist so far',
+        'modes           the frequencies of the night',
+        'archive         open the record (every transmission)',
+        'replay          run the latest transmission back',
+        'status          model · tokens · transmission',
+        'voice           cycle: demon / borrowed / off',
+        'say <words>     make the voice say it',
+        'mute            all sound off',
+        '',
+        'anything else you type is answered by fable 5.',
+        'esc goes back to watching. any key closes this.',
+      ], 40000);
+      this.state='idle'; this.display='';
+      return;
+    } else if(q==='modes'){
+      this.showPanel(
+        ['frequencies — one per transmission','']
+        .concat(MODE_LIST.map(m=>m[0].padEnd(13)+m[1]))
+        .concat(['','use "topic <words>" to force your own subject.']), 40000);
+      this.state='idle'; this.display='';
+      return;
+    } else if(q==='status'){
+      const dreamedN=Object.keys(rooms).filter(k=>rooms[k].dreamed).length;
+      this.showPanel([
+        'status',
+        '',
+        'model         '+(DLG.model||'(not yet on the line)'),
+        'tokens        '+DLG.tokens+' spent this session',
+        'transmission  '+pad3(this.trans)+(DLG.mode?' — '+DLG.mode:''),
+        'room          '+this.room+((rooms[this.room]&&rooms[this.room].dreamed)?' (dreamed)':''),
+        'rooms dreamt  '+dreamedN,
+        'voice         '+audio.voiceMode,
+        'record        /archive — type "archive" to open',
+      ]);
+      this.state='idle'; this.display='';
+      return;
+    } else if(q.startsWith('topic ')){
+      const topic=raw.replace(/^topic\s+/i,'').trim().slice(0,90);
+      if(!topic){ lines=['a topic needs words.']; }
+      else if(DLG.available){
+        DLG.pendingTopic=topic;
+        if(DLG.active||DLG.paused){
+          DLG.endConversation('re-tuning to your frequency: "'+topic+'".', {noSave:false});
+        } else {
+          DLG.start(now);
+          this.queue=['tuning to your frequency: "'+topic+'".'];
+        }
+        this.state='idle'; this.display='';
+        return;
+      } else lines=['no second line to tune. the topic stays yours.'];
+    } else if(q==='rooms'){
+      const dreamed=Object.keys(rooms).filter(k=>rooms[k].dreamed);
+      lines=[ 'built: '+ROOM_ORDER.join(' · ') ];
+      if(dreamed.length) lines.push('dreamt so far: '+dreamed.join(' · '));
+      lines.push('go somewhere that does not exist and i will dream it.');
     } else if(q.startsWith('go ')||q.startsWith('enter ')){
       const name=q.replace(/^(go|enter)\s+/,'').trim();
       if(rooms[name]){ room=name; lines=[ROOM_INTROS[name]||('the '+name+' room. i dreamed this one earlier.')]; }
@@ -894,21 +984,12 @@ const D = {
       lines=[ audio.voiceMode==='demon' ? 'voice: mine. the one from the transmission. i built it from oscillators.'
             : audio.voiceMode==='tts'   ? 'voice: borrowed. the browser lends me a throat. it fits badly.'
             : 'voice: off. pure teletype.' ];
-    } else if(q==='archive'){
+    } else if(q==='archive'||q==='record'){
+      try{ window.open('/archive','_blank'); }catch(e){}
       this.state='idle'; this.display='';
       fetch('/api/archive').then(r=>r.ok?r.json():null).catch(()=>null).then(g=>{
-        const local=DLG.archived();
-        const L=[];
-        if(g && g.totals){
-          L.push('the record: '+g.totals.conversations+' transmissions, '+g.totals.messages+' lines. kept on a server that outlives this tab.');
-          (g.conversations||[]).slice(0,3).forEach(c=>{
-            const first=(c.messages.find(m=>m.who!=='w')||{}).text||'';
-            L.push('· '+(c.mode||'?')+' — "'+first.slice(0,58)+(first.length>58?'…':'')+'"');
-          });
-        }
-        if(local.length) L.push('(plus '+local.length+' kept only in this browser.)');
-        if(!L.length) L.push('the archive is empty. nothing has finished happening yet.');
-        else { L.push('the whole record, readable: /archive'); L.push('type "replay" to run the latest back.'); }
+        const L=['opening the record in another window.'];
+        if(g && g.totals) L.push(g.totals.conversations+' transmissions, '+g.totals.messages+' lines. nothing edited.');
         this.queue=L; this.holdUntil=perfNow();
       });
       return;
@@ -1042,13 +1123,15 @@ const DLG = {
   stop(){ this.active=false; this.waiting=false; this.state='idle'; },
   resume(now){ this.paused=false; this.msgs=0; this.holdUntil=(now||perfNow())+400; this.sessions++; },
 
+  pendingTopic:null,
   request(){
     if(this.waiting) return;
     this.waiting=true;
+    const topic=(!this.history.length && this.pendingTopic) ? this.pendingTopic : undefined;
     fetch('/api/advance', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({history: this.history.slice(-16), mode: this.mode, room: D.room, conv: this.conv}),
+      body: JSON.stringify({history: this.history.slice(-16), mode: this.mode, room: D.room, conv: this.conv, topic}),
     }).then(async r=>{
       if(r.status===429){
         const j=await r.json().catch(()=>({}));
@@ -1067,6 +1150,7 @@ const DLG = {
       }
       if(j.mode) this.mode=j.mode;
       if(j.conv) this.conv=j.conv;
+      if(!this.history.length) this.pendingTopic=null; // the tuning took
       if(j.model) this.model=j.model;
       if(j.usage) this.tokens+=(j.usage.input_tokens||0)+(j.usage.output_tokens||0);
       if(j.room && (rooms[j.room]||DREAM_RE.test(j.room)) && j.room!==D.room) D.switchRoom(j.room, perfNow());
@@ -1135,6 +1219,16 @@ function printable(k){ return k.length===1; }
 addEventListener('keydown', e=>{
   audio.start();
   if(e.metaKey||e.ctrlKey||e.altKey) return;
+  if(D.panel){ D.panel=null; if(e.key==='Escape'){ e.preventDefault(); return; } }
+  if(D.mode==='input' && e.key==='ArrowUp'){
+    if(D.cmdHist.length){ D.histIdx=Math.min(D.cmdHist.length-1, D.histIdx+1); D.buffer=D.cmdHist[D.cmdHist.length-1-D.histIdx]; }
+    e.preventDefault(); return;
+  }
+  if(D.mode==='input' && e.key==='ArrowDown'){
+    if(D.histIdx>0){ D.histIdx--; D.buffer=D.cmdHist[D.cmdHist.length-1-D.histIdx]; }
+    else { D.histIdx=-1; D.buffer=''; }
+    e.preventDefault(); return;
+  }
   if(D.mode!=='input' && e.key==='Enter'){
     if(DLG.paused) DLG.resume(perfNow());
     e.preventDefault(); return;
@@ -1146,6 +1240,8 @@ addEventListener('keydown', e=>{
   }
   if(e.key==='Enter'){
     const text=D.buffer; D.buffer=''; D.mode='auto';
+    if(text.trim()){ D.cmdHist.push(text); if(D.cmdHist.length>50) D.cmdHist.shift(); }
+    D.histIdx=-1;
     D.respond(text, perfNow());
   } else if(e.key==='Backspace'){
     D.buffer=D.buffer.slice(0,-1); audio.tick();
@@ -1157,7 +1253,15 @@ addEventListener('keydown', e=>{
   }
   e.preventDefault();
 });
-canvas.addEventListener('pointerdown', ()=>{ audio.start(); kb.focus({preventScroll:true}); });
+canvas.addEventListener('pointerdown', (e)=>{
+  audio.start();
+  if(recordZone && e.clientX>=recordZone.x0 && e.clientX<=recordZone.x1
+     && e.clientY>=recordZone.y0 && e.clientY<=recordZone.y1){
+    try{ window.open('/archive','_blank'); }catch(err){}
+    return;
+  }
+  kb.focus({preventScroll:true});
+});
 kb.addEventListener('input', ()=>{ // mobile keyboards
   if(kb.value){
     audio.start();
@@ -1173,6 +1277,7 @@ const T0 = performance.now();
 function perfNow(){ return performance.now()-T0; }
 const CLOCK0 = 3*3600 + 33*60; // 03:33:00, transmission time
 let recDot={x:0,y:0};
+let recordZone=null;
 let grainFrame=0;
 
 function refreshGrain(){
@@ -1242,6 +1347,25 @@ function drawHeaderAndPrompt(now, t){
     const rl='room: '+D.room+((rooms[D.room]&&rooms[D.room].dreamed)?' — dreamed':'');
     drawString(2, 1, rl, 0.22);
   }
+  // clickable doorway to the record
+  const recLink='[ the record → ]';
+  const recX=cols-recLink.length-2;
+  drawString(recX, 1, recLink, 0.28);
+  recordZone={x0:recX*cw, y0:1*chh, x1:(recX+recLink.length)*cw, y1:2*chh};
+  // pinned panel (help / modes / status)
+  if(D.panel){
+    if(now>D.panel.until) D.panel=null;
+    else{
+      const ls=D.panel.lines;
+      const w=Math.min(cols-8, Math.max(24, ...ls.map(l=>l.length))+4);
+      const x0=3, y0=3;
+      const border='+'+('-'.repeat(w-2))+'+';
+      gctx.clearRect((x0-1)*cw, (y0-1)*chh, (w+2)*cw, (ls.length+3)*chh);
+      drawString(x0, y0, border, 0.45);
+      ls.forEach((l,i)=>{ drawString(x0, y0+1+i, '| '+l.slice(0,w-4).padEnd(w-4)+' |', 0.85); });
+      drawString(x0, y0+1+ls.length, border, 0.45);
+    }
+  }
   let mid;
   if(DLG.active && DLG.model==='fake'){
     mid='!! SIMULATION !!';
@@ -1290,7 +1414,7 @@ function drawHeaderAndPrompt(now, t){
   let hint;
   if(!audio.started) hint='[ click or type — sound on ]';
   else if(DLG.paused) hint='[ enter — wake them ]';
-  else if(D.mode!=='input') hint= DLG.active ? '[ live · type to interject ]' : '[ type to speak · "help" ]';
+  else if(D.mode!=='input') hint= DLG.active ? '[ live · "help" · "topic <words>" ]' : '[ type to speak · "help" ]';
   else hint='[ enter to send · esc to watch ]';
   if(!wrapped){
     const hx=cols-hint.length-2;

@@ -64,6 +64,9 @@ module.exports = async (req, res) => {
   const conv = (typeof body.conv === 'string' && /^[a-z0-9-]{8,40}$/.test(body.conv))
              ? body.conv : require('crypto').randomUUID();
   const curRoom = typeof body.room === 'string' && /^[a-z][a-z0-9_-]{0,14}$/.test(body.room) ? body.room : null;
+  const topic = typeof body.topic === 'string'
+    ? body.topic.replace(/[^\w\s'?.,:-]/g, '').trim().slice(0, 90) || null
+    : null; // a watcher can re-tune the duo to their own subject
 
   if (fake) {
     const raw = FAKE_LINES[history.length % FAKE_LINES.length];
@@ -76,7 +79,7 @@ module.exports = async (req, res) => {
   try {
     const Anthropic = require('@anthropic-ai/sdk');
     const client = new Anthropic();
-    const r = await F.generateTurn(client, { history, mode, room: curRoom });
+    const r = await F.generateTurn(client, { history, mode, room: curRoom, topic });
 
     // flagged → cancel the whole conversation; the terminal re-tunes to a fresh one
     if (r.refusal) return send(res, 200, { refusal: true, who: r.who, mode });
