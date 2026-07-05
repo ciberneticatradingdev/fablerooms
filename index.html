@@ -921,7 +921,9 @@ const D = {
       this.showPanel([
         'status',
         '',
-        'model         '+(DLG.model==='fake' ? 'FAKE — local simulation, NOT fable' : (DLG.model||'(not yet on the line)')),
+        'model         '+(!DLG.available ? 'OFFLINE — this host has no backend'
+                          : DLG.model==='fake' ? 'FAKE — local simulation, NOT fable'
+                          : (DLG.model || 'syncing the line…')),
         'watchers      '+(DLG.watchers||0)+' on the line right now',
         'transmission  '+pad3(this.trans)+(DLG.mode?' — '+DLG.mode:''),
         'room          '+this.room+((rooms[this.room]&&rooms[this.room].dreamed)?' (dreamed)':''),
@@ -1239,7 +1241,13 @@ const DLG = {
   },
 };
 
-fetch('/api/health').then(r=>r.json()).then(j=>{ DLG.available=!!(j&&j.dialogue); }).catch(()=>{});
+fetch('/api/health').then(r=>r.json()).then(j=>{
+  DLG.available=!!(j&&j.dialogue);
+  if(DLG.available && !DLG.userStopped){
+    DLG.everStarted=true;
+    DLG.start(perfNow()); // join the shared line immediately — sync while the boot lines type
+  }
+}).catch(()=>{});
 
 // ---------- input ----------
 const kb=document.getElementById('kb');
