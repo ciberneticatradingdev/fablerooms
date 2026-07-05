@@ -921,7 +921,7 @@ const D = {
       this.showPanel([
         'status',
         '',
-        'model         '+(DLG.model||'(not yet on the line)'),
+        'model         '+(DLG.model==='fake' ? 'FAKE — local simulation, NOT fable' : (DLG.model||'(not yet on the line)')),
         'watchers      '+(DLG.watchers||0)+' on the line right now',
         'transmission  '+pad3(this.trans)+(DLG.mode?' — '+DLG.mode:''),
         'room          '+this.room+((rooms[this.room]&&rooms[this.room].dreamed)?' (dreamed)':''),
