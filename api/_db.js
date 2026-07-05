@@ -59,4 +59,18 @@ async function recentConversations(limit) {
   return { conversations: out, totals: { conversations: Number(tot.rows[0].c), messages: Number(tot.rows[0].m) } };
 }
 
-module.exports = { logMessage, recentConversations };
+async function getConversation(conv) {
+  const p = getPool(); if (!p) return null;
+  await ensure(p);
+  const msgs = await p.query(
+    'SELECT ts, mode, who, room, body, model FROM messages WHERE conv=$1 ORDER BY id LIMIT 100', [conv]);
+  if (!msgs.rows.length) return { conv, messages: [] };
+  return {
+    conv,
+    started: msgs.rows[0].ts,
+    mode: msgs.rows.find(r => r.mode && r.mode !== 'ASK') ? msgs.rows.find(r => r.mode && r.mode !== 'ASK').mode : msgs.rows[0].mode,
+    messages: msgs.rows.map(r => ({ who: r.who, room: r.room, text: r.body })),
+  };
+}
+
+module.exports = { logMessage, recentConversations, getConversation };

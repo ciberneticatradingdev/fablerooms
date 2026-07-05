@@ -1,6 +1,11 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "cleanUrls": true,
   "functions": {
+    "api/loop.js": { "maxDuration": 300 },
     "api/*.js": { "maxDuration": 60 }
-  }
+  },
+  "crons": [
+    { "path": "/api/loop", "schedule": "0 9 * * *" }
+  ]
 }

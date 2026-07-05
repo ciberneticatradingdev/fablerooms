@@ -908,7 +908,7 @@ const D = {
         }
         if(local.length) L.push('(plus '+local.length+' kept only in this browser.)');
         if(!L.length) L.push('the archive is empty. nothing has finished happening yet.');
-        else L.push('type "replay" to run the latest back.');
+        else { L.push('the whole record, readable: /archive'); L.push('type "replay" to run the latest back.'); }
         this.queue=L; this.holdUntil=perfNow();
       });
       return;
