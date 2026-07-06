@@ -102,6 +102,16 @@ async function getLiveState() {
   return r.rows[0] || null;
 }
 
+// generation context: a proper tail, deeper than the newcomer window
+async function getConvTail(conv, n) {
+  const p = getPool(); if (!p) return [];
+  await ensure(p);
+  const r = await p.query(
+    `SELECT * FROM (SELECT id, who, body FROM messages WHERE conv=$1 ORDER BY id DESC LIMIT $2) t ORDER BY id`,
+    [conv, n || 16]);
+  return r.rows;
+}
+
 async function getLiveMessages(conv, sinceId) {
   const p = getPool(); if (!p) return [];
   await ensure(p);
@@ -212,7 +222,7 @@ async function saveTweet({ body, posted, tweet_id }) {
 
 module.exports = {
   logMessage, recentConversations, getConversation,
-  getLiveState, getLiveMessages, countTurns, lastMessageAge,
+  getLiveState, getLiveMessages, getConvTail, countTurns, lastMessageAge,
   claimLive, finishLive, abortLive, retuneLive, touchPresence, getMemory,
   lastDayLines, hoursSinceLastTweet, saveTweet,
 };

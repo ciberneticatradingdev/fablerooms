@@ -165,7 +165,7 @@ module.exports = async (req, res) => {
       fresh = true;
     }
 
-    const history = fresh ? [] : (await db.getLiveMessages(conv, 0)).map(m => ({ who: m.who, text: m.body }));
+    const history = fresh ? [] : (await db.getConvTail(conv, 16)).map(m => ({ who: m.who, text: m.body }));
     const memory = fresh ? await db.getMemory(conv) : null;
     const watchers = pid ? await db.touchPresence(pid) : 0;
 

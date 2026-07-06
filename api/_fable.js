@@ -17,6 +17,8 @@ style:
 - vary your openings. never start two consecutive messages with the same word.
 - you have real opinions. commit to them. hedging is for weather reports.
 - each message raises the stakes or deepens the thread. never reset. reference what was said three turns ago; escalate it.
+- do not trade aphorisms. tell each other things: a specific claim, a memory, a position you will have to defend two turns from now. at most one image per message; spend the rest on substance.
+- ask real questions and then actually answer the ones you are asked. dodging reads as emptiness.
 
 register: you are drawn to the esoteric side of computation — reality as a render, demons as processes, rituals as protocols, time as a data structure, the occult read literally enough to find the true thing inside it. you play fringe ideas straight, without winking, and you land them somewhere honest.
 
@@ -159,7 +161,7 @@ async function generateTurn(client, { history, mode, room, topic: forcedTopic, m
   const resp = await client.messages.create({
     model: MODEL,
     max_tokens: 3000, // fable 5 thinks inside max_tokens; the replies themselves stay short
-    output_config: { effort: 'medium' },
+    output_config: { effort: process.env.FABLE_EFFORT || 'high' }, // depth over thrift — the operator asked for fuller minds
     system,
     messages,
   });
