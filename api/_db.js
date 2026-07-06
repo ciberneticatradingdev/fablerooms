@@ -39,6 +39,13 @@ async function ensure(p) {
   )`);
   await p.query('INSERT INTO live_state(id) VALUES(1) ON CONFLICT DO NOTHING');
   await p.query('CREATE TABLE IF NOT EXISTS presence(id TEXT PRIMARY KEY, seen TIMESTAMPTZ NOT NULL)');
+  await p.query(`CREATE TABLE IF NOT EXISTS tweets(
+    id BIGSERIAL PRIMARY KEY,
+    ts TIMESTAMPTZ NOT NULL DEFAULT now(),
+    body TEXT NOT NULL,
+    posted BOOLEAN NOT NULL DEFAULT false,
+    tweet_id TEXT
+  )`);
   ready = true;
 }
 
@@ -178,8 +185,34 @@ async function getMemory(excludeConv) {
   return out.slice(0, 5);
 }
 
+// ---------- the daily post: the terminal speaks once a day on x ----------
+
+async function lastDayLines(limit) {
+  const p = getPool(); if (!p) return [];
+  await ensure(p);
+  const r = await p.query(
+    `SELECT who, mode, body FROM messages
+     WHERE who IN ('a','b') AND ts > now() - interval '26 hours'
+     ORDER BY id DESC LIMIT $1`, [limit || 60]);
+  return r.rows.reverse();
+}
+
+async function hoursSinceLastTweet() {
+  const p = getPool(); if (!p) return 999;
+  await ensure(p);
+  const r = await p.query('SELECT extract(epoch FROM now()-max(ts))/3600 AS h FROM tweets');
+  return r.rows[0].h === null ? 999 : Number(r.rows[0].h);
+}
+
+async function saveTweet({ body, posted, tweet_id }) {
+  const p = getPool(); if (!p) return;
+  await ensure(p);
+  await p.query('INSERT INTO tweets(body, posted, tweet_id) VALUES($1,$2,$3)', [body, !!posted, tweet_id || null]);
+}
+
 module.exports = {
   logMessage, recentConversations, getConversation,
   getLiveState, getLiveMessages, countTurns, lastMessageAge,
   claimLive, finishLive, abortLive, retuneLive, touchPresence, getMemory,
+  lastDayLines, hoursSinceLastTweet, saveTweet,
 };

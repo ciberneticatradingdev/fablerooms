@@ -6,6 +6,7 @@
     "api/*.js": { "maxDuration": 60 }
   },
   "crons": [
-    { "path": "/api/loop", "schedule": "0 9 * * *" }
+    { "path": "/api/loop", "schedule": "0 9 * * *" },
+    { "path": "/api/tweet", "schedule": "0 15 * * *" }
   ]
 }
