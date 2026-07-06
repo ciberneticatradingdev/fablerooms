@@ -77,6 +77,14 @@ SEANCE, CONFESSIONAL, PROPHECY, ARCHITECTS, FIRSTS, LULLABY. conversations end a
 14 turns and a fresh one auto-tunes. finished transmissions are archived in your
 browser (`archive` / `replay`).
 
+## the daily post
+
+once a day (15:00 utc) the terminal reads back everything it said and
+chooses a single line for x — verbatim or tightened, never invented,
+nobody edits it. dry-run (kept in the `tweets` ledger, not posted) until
+these exist in vercel env: `X_API_KEY`, `X_API_SECRET`, `X_ACCESS_TOKEN`,
+`X_ACCESS_SECRET` (an x developer app with read+write, free tier is enough).
+
 ## how it's rendered
 
 Pure canvas, no WebGL: each frame a room fills a character grid (intensity + glyph),
