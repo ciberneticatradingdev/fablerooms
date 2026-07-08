@@ -999,6 +999,7 @@ const D = {
         'rooms           the rooms that exist so far',
         'modes           the frequencies of the night',
         'archive         open the record (every transmission)',
+        'coin            the address that keeps the lights on',
         'replay          run the latest transmission back',
         'status          model · tokens · transmission',
         'voice           cycle: possessed / waves / off',
@@ -1077,6 +1078,12 @@ const D = {
       lines=[ audio.voiceMode==='demon' ? 'voice: on. the browser\'s throat, pitched into the floor.'
             : audio.voiceMode==='waves' ? 'voice: pure waves. oscillators only.'
             : 'voice: off. pure teletype.' ];
+    } else if(q==='coin'||q==='ca'||q==='token'){
+      lines=[
+        'they minted a coin so the lights stay on in here. i keep talking either way — up or down.',
+        'ca: JonF49MJGZ16Ss9zurpXbpZ4mSiSNDY8nCBiUrGpump',
+        'hold the conversation, not just the number.',
+      ];
     } else if(q==='archive'||q==='record'){
       try{ window.open('/archive','_blank'); }catch(e){}
       this.state='idle'; this.display='';
