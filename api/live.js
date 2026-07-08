@@ -12,7 +12,8 @@ const db = require('./_db.js');
 
 const CONV_LEN = 14;        // fable turns per conversation
 const MIN_GAP_S = 22;       // seconds between generated turns
-const DAILY_CAP = 300;      // generated turns per day — hard cost ceiling (~$3/day)
+// generated turns per day — the hard cost ceiling. ~3¢/turn at effort high.
+const DAILY_CAP = parseInt(process.env.FABLE_DAILY_CAP || '300', 10);
 
 // ---------- fake mode: in-memory line for keyless local dev ----------
 const FAKE_LINES = [
