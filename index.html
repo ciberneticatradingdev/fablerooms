@@ -1139,17 +1139,25 @@ const DLG = {
           this.conv=j.conv;
         }
         if(j.mode) this.mode=j.mode;
+        const fresh=[];
         for(const m of (j.msgs||[])){
           if(m.id<=this.lastId) continue;
           this.lastId=m.id;
           if(m.model) this.model=m.model;
           if(m.who==='w' && this.recentSays.indexOf(m.body)>=0) continue; // own echo, already shown
-          if(firstSync){ // catching up: render instantly, no typing, no voice
+          fresh.push(m);
+        }
+        if(firstSync && fresh.length){
+          // catching up: older lines land instantly, the last two type themselves —
+          // a newcomer should walk in on motion, not on a museum
+          const typed=fresh.splice(Math.max(0, fresh.length-2));
+          for(const m of fresh){
             this.history.push({who:m.who, text:m.body});
             if(m.room && (rooms[m.room]||DREAM_RE.test(m.room)) && m.room!==D.room) D.switchRoom(m.room, perfNow());
-          } else {
-            this.pending.push(m);
           }
+          this.pending.push(...typed);
+        } else {
+          this.pending.push(...fresh);
         }
       })
       .catch(()=>{
@@ -1345,7 +1353,11 @@ function drawDialogueLog(){
     for(const l of wrapped) lines.push({t:l, age});
     lines.push({t:'', age});
   }
-  if(DLG.advBusy && !DLG.pending.length && DLG.state!=='typing') lines.push({t:'fable.'+(DLG.who==='a'?'b':'a')+'> ···', age:0});
+  if(DLG.active && !DLG.dormant && !DLG.replaying && DLG.state!=='typing' && !DLG.pending.length){
+    // the line is never dead: between turns, the next voice is forming
+    const dots='·'.repeat(1+Math.floor((perfNow()/450)%3));
+    lines.push({t:'fable.'+(DLG.who==='a'?'b':'a')+'> '+dots, age:0});
+  }
   if(DLG.dormant) lines.push({t:'— the line rests. it spoke its fill for today. —', age:0});
   if(DLG.paused) lines.push({t:'— transmission idle. they are holding their breath. —', age:0});
   const show=lines.slice(-maxRows);
