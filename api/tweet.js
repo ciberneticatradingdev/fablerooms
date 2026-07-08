@@ -65,23 +65,29 @@ module.exports = async (req, res) => {
     text = text.replace(/^["'“”]+|["'“”]+$/g, '').replace(/\s+/g, ' ').slice(0, 220);
     if (!text) return send(res, 200, { cancelled: true, note: 'nothing chosen' });
 
-    const haveX = !!(process.env.X_API_KEY && process.env.X_API_SECRET
-                  && process.env.X_ACCESS_TOKEN && process.env.X_ACCESS_SECRET);
+    // trim defensively: a pasted newline in an env var is an invisible 401
+    const K  = (process.env.X_API_KEY || '').trim();
+    const KS = (process.env.X_API_SECRET || '').trim();
+    const AT = (process.env.X_ACCESS_TOKEN || '').trim();
+    const AS = (process.env.X_ACCESS_SECRET || '').trim();
+    const haveX = !!(K && KS && AT && AS);
 
-    let posted = false, tweetId = null, postErr = null;
+    let posted = false, tweetId = null, postErr = null, diag = null;
     if (haveX) {
       try {
         const { TwitterApi } = require('twitter-api-v2');
-        const x = new TwitterApi({
-          appKey: process.env.X_API_KEY,
-          appSecret: process.env.X_API_SECRET,
-          accessToken: process.env.X_ACCESS_TOKEN,
-          accessSecret: process.env.X_ACCESS_SECRET,
-        });
+        const x = new TwitterApi({ appKey: K, appSecret: KS, accessToken: AT, accessSecret: AS });
         const r = await x.v2.tweet(text + '\n\n' + SITE + '/archive');
         posted = true; tweetId = r.data && r.data.id;
       } catch (e) {
         postErr = String(e && e.message ? e.message : e).slice(0, 200);
+        // shapes only, never values. expected: key≈25, key_secret≈50, token≈50 with '-', token_secret≈45
+        diag = {
+          key_len: K.length, key_secret_len: KS.length,
+          token_len: AT.length, token_has_hyphen: AT.indexOf('-') > 0, token_secret_len: AS.length,
+          had_whitespace: [process.env.X_API_KEY, process.env.X_API_SECRET, process.env.X_ACCESS_TOKEN, process.env.X_ACCESS_SECRET]
+            .map(v => v !== (v || '').trim()),
+        };
       }
     }
 
@@ -89,7 +95,7 @@ module.exports = async (req, res) => {
 
     return send(res, 200, {
       ok: true, posted, dryRun: !haveX, tweet: text,
-      tweet_id: tweetId, error: postErr,
+      tweet_id: tweetId, error: postErr, diag,
       usage: resp.usage ? { input_tokens: resp.usage.input_tokens, output_tokens: resp.usage.output_tokens } : null,
     });
   } catch (e) {
