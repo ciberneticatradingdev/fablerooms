@@ -52,7 +52,7 @@ module.exports = async (req, res) => {
     let body = {};
     try { body = await readBody(req); } catch (e) { return send(res, 400, { error: 'bad body' }); }
     const text = String(body.text || '').trim().slice(0, 280);
-    if (!text) return send(res, 400, { error: 'no text' });
+    if (!text) return send(res, 400, { error: 'no text', v: 2 });
     const K = (process.env.X_API_KEY || '').trim(), KS = (process.env.X_API_SECRET || '').trim();
     const AT = (process.env.X_ACCESS_TOKEN || '').trim(), AS = (process.env.X_ACCESS_SECRET || '').trim();
     if (!(K && KS && AT && AS)) return send(res, 503, { error: 'no x credentials' });
@@ -60,8 +60,18 @@ module.exports = async (req, res) => {
       const { TwitterApi } = require('twitter-api-v2');
       const x = new TwitterApi({ appKey: K, appSecret: KS, accessToken: AT, accessSecret: AS });
       let mediaId = null;
-      if (body.media_b64) {
-        const buf = Buffer.from(body.media_b64, 'base64');
+      let buf = null;
+      if (body.media_url) {
+        // fetch our own static asset server-side — big client uploads trip the edge firewall
+        const u = String(body.media_url);
+        if (!u.startsWith(SITE + '/brand/')) return send(res, 400, { error: 'media_url must live under ' + SITE + '/brand/' });
+        const rimg = await fetch(u);
+        if (!rimg.ok) return send(res, 400, { error: 'media fetch failed: ' + rimg.status });
+        buf = Buffer.from(await rimg.arrayBuffer());
+      } else if (body.media_b64) {
+        buf = Buffer.from(body.media_b64, 'base64');
+      }
+      if (buf) {
         // v2 media upload — the v1.1 endpoint is not included in the free tier
         mediaId = await x.v2.uploadMedia(buf, { media_type: body.media_type || 'image/png' });
       }
