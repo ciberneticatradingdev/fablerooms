@@ -102,158 +102,136 @@ function drawString(x,y,str,alpha){
 // ---------- audio: 60Hz hum + synthesized voice ----------
 const audio = {
   A:null, started:false, muted:false, speech:0, voiceGain:null,
-  voiceMode:'demon', // demon (synthesized from scratch, like the transmission) | tts | off
-  noiseBuf:null, _demon:null,
+  voiceMode:'waves', // waves (pure oscillators, like the transmission) | off
+  noiseBuf:null, _voice:null, _shapeCurve:null,
 
-  // the voice: real words, demonic register. speech synthesis pitched into the
-  // floor, with a ring-modulated growl underneath, gated to the utterance.
+  // ---- the voice: pure waves. no borrowed throats, no tts. ----
+  // sawtooth + sub-sine through a waveshaper, a low body path in parallel with
+  // vowel formants, a ring-mod growl on the line, prosody from the punctuation,
+  // and a compressor at the end so it actually reaches you.
   say(text, who){
-    if(this.muted || this.voiceMode==='off') return;
-    const demonic=(this.voiceMode==='demon');
-    if(!('speechSynthesis' in window)){
-      if(demonic && this.started){ try{ this.speakDemon(text, who); }catch(e){} }
-      return;
-    }
+    if(this.muted || this.voiceMode==='off' || !this.started) return;
     try{
-      speechSynthesis.cancel();
-      this.growlStop();
-      const u=new SpeechSynthesisUtterance(text);
-      if(demonic){ u.pitch=(who==='b')?0.25:0.02; u.rate=(who==='b')?0.94:0.8; }
-      else       { u.pitch=(who==='b')?0.85:0.55; u.rate=(who==='b')?1.04:0.9; }
-      u.volume=1.0;
-      const vs=speechSynthesis.getVoices();
-      const v=vs.find(x=>/^en/i.test(x.lang)&&/daniel|alex|fred|male/i.test(x.name))||vs.find(x=>/^en/i.test(x.lang));
-      if(v) u.voice=v;
-      if(demonic && this.started){
-        u.onstart=()=>this.growlStart(who);
-        u.onend=()=>this.growlStop();
-        u.onerror=()=>this.growlStop();
-      }
-      speechSynthesis.speak(u);
+      this.hushVoice();
+      const A=this.A;
+      const r=this.buildVoiceLine(A, this.voiceBus||this.voiceGain, text, who, A.currentTime+0.08, true);
+      this._voice=r;
     }catch(e){}
   },
 
-  // the growl: a dark drone that breathes under the words while fable speaks
-  _growl:null, _growlInt:null,
-  growlStart(who){
-    const A=this.A; if(!A) return;
-    this.growlStop();
-    const t=A.currentTime;
-    const out=A.createGain();
-    out.gain.setValueAtTime(0.0001,t);
-    out.gain.exponentialRampToValueAtTime(0.34, t+0.18);
-    const f0=(who==='b')?55:38;
-    const o1=A.createOscillator(); o1.type='sawtooth'; o1.frequency.value=f0;
-    const o2=A.createOscillator(); o2.type='sawtooth'; o2.frequency.value=f0*1.02;
-    const sub=A.createOscillator(); sub.type='square'; sub.frequency.value=f0*0.5;
-    const subG=A.createGain(); subG.gain.value=0.6;
-    const mix=A.createGain(); mix.gain.value=0.5;
-    o1.connect(mix); o2.connect(mix); sub.connect(subG); subG.connect(mix);
-    const lp=A.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=420; lp.Q.value=0.7;
-    const ring=A.createGain(); ring.gain.value=0.65;
-    const lfo=A.createOscillator(); lfo.frequency.value=(who==='b')?37:26;
-    const lfoG=A.createGain(); lfoG.gain.value=0.35;
-    lfo.connect(lfoG); lfoG.connect(ring.gain);
-    const oscs=[o1,o2,sub,lfo];
-    if(this.noiseBuf){ // breath
-      const n=A.createBufferSource(); n.buffer=this.noiseBuf; n.loop=true;
-      const nf=A.createBiquadFilter(); nf.type='bandpass'; nf.frequency.value=900; nf.Q.value=0.6;
-      const ng=A.createGain(); ng.gain.value=0.07;
-      n.connect(nf); nf.connect(ng); ng.connect(out);
-      n.start(t); oscs.push(n);
-    }
-    mix.connect(lp); lp.connect(ring); ring.connect(out); out.connect(this.voiceGain);
-    o1.start(t); o2.start(t); sub.start(t); lfo.start(t);
-    this._growl={out, oscs};
-    this._growlInt=setInterval(()=>{ this.speech=1; },120); // the signal room dances
+  shapeCurve(){
+    if(this._shapeCurve) return this._shapeCurve;
+    const n=1024, c=new Float32Array(n);
+    for(let i=0;i<n;i++){ const x=(i/(n-1))*2-1; c[i]=Math.tanh(x*2.4); }
+    this._shapeCurve=c;
+    return c;
   },
-  growlStop(){
-    if(this._growlInt){ clearInterval(this._growlInt); this._growlInt=null; }
-    const g=this._growl; if(!g) return;
-    this._growl=null;
-    const A=this.A;
-    try{
-      const t=A.currentTime;
-      g.out.gain.cancelScheduledValues(t);
-      g.out.gain.setValueAtTime(Math.max(0.0001,g.out.gain.value), t);
-      g.out.gain.exponentialRampToValueAtTime(0.0001, t+0.25);
-    }catch(e){}
-    setTimeout(()=>{ try{ g.oscs.forEach(o=>o.stop()); }catch(e){} try{ g.out.disconnect(); }catch(e){} }, 420);
+  noiseFor(A){
+    if(A.__frNoise) return A.__frNoise;
+    const nb=A.createBuffer(1, Math.floor(A.sampleRate*0.4), A.sampleRate);
+    const nd=nb.getChannelData(0);
+    for(let i=0;i<nd.length;i++) nd[i]=Math.random()*2-1;
+    A.__frNoise=nb;
+    return nb;
   },
 
-  // demon voice: built from oscillators, formant filters, a sub-octave,
-  // a detuned double, and a slow ring-mod growl. no borrowed throats.
-  speakDemon(text, who){
-    const A=this.A; if(!A) return;
-    this.hushDemon();
-    const t0=A.currentTime+0.12;
-    const base = who==='b' ? 88 : 56;
-    const out=A.createGain(); out.gain.value=2.4;
-    const ring=A.createGain(); ring.gain.value=0.6;
-    const lfo=A.createOscillator(); lfo.frequency.value=(who==='b')?43:31;
-    const lfoG=A.createGain(); lfoG.gain.value=0.4;
+  // schedules one spoken line into `dest` on context `A`, starting at t0.
+  // pure function of (text, who) — also used by the offline self-test.
+  buildVoiceLine(A, dest, text, who, t0, live){
+    const FORM={a:[720,1120],e:[540,1750],i:[400,1980],o:[560,880],u:[440,1040]};
+    const baseF0=(who==='b')?84:52;
+    const isQ=/\?\s*$/.test(text);
+    const line=A.createGain(); line.gain.value=1.0;
+    const ring=A.createGain(); ring.gain.value=(who==='b')?0.78:0.62;
+    const lfo=A.createOscillator(); lfo.frequency.value=(who==='b')?34:26;
+    const lfoG=A.createGain(); lfoG.gain.value=(who==='b')?0.22:0.38;
     lfo.connect(lfoG); lfoG.connect(ring.gain); lfo.start(t0);
-    const lp=A.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=2600; lp.Q.value=0.5;
-    out.connect(ring); ring.connect(lp); lp.connect(this.voiceGain);
-    this._demon={lp, lfo};
+    line.connect(ring); ring.connect(dest);
 
-    const FORM={a:[700,1080],e:[530,1700],i:[400,1900],o:[560,850],u:[440,1000]};
-    const words=text.toLowerCase().split(/[^a-z']+/).filter(Boolean).slice(0,60);
+    const words=text.toLowerCase().split(/\s+/).filter(Boolean).slice(0,48);
+    // count syllables for the prosody contour
+    let total=0;
+    const parsed=words.map(w=>{
+      const bare=w.replace(/[^a-z']/g,'');
+      const sylls=bare? (bare.match(/[^aeiou']*[aeiou]+[^aeiou']?/g)||[bare.slice(0,3)]) : [];
+      total+=sylls.length;
+      return {sylls, punct: /[.?!]$/.test(w)?'.' : (/,$/.test(w)?',':'')};
+    });
+    total=Math.max(1,total);
+
+    const noise=this.noiseFor(A);
+    const curve=this.shapeCurve();
     let t=t0, idx=0;
-    for(const w of words){
-      const sylls=w.match(/[^aeiou']*[aeiou]+[^aeiou']?/g)||[w.slice(0,3)];
-      for(const s of sylls){
+    for(const w of parsed){
+      for(const s of w.sylls){
+        if(idx>=90) break;
         idx++;
+        const prog=idx/total;
         const vowel=(s.match(/[aeiou]/)||['o'])[0];
-        const dur=0.09+Math.min(0.08, s.length*0.018);
-        const jit=(hash(idx,3,1)-0.5)*0.14;
-        const f0=Math.max(30, base*(1+jit)*(1-Math.min(0.10,(t-t0)*0.008))); // sentences sink as they go
-        const [F1,F2]=FORM[vowel];
-        const src=A.createGain(); src.gain.value=0.7;
+        const dur=0.12+Math.min(0.09, s.length*0.02);
+        let contour=1.06-prog*0.16;                       // sentences sink as they go
+        if(isQ && prog>0.72) contour*=1+(prog-0.72)*1.2;  // questions climb at the end
+        const f0=Math.max(34, baseF0*contour*(1+(hash(idx,5,3)-0.5)*0.09));
+
         const o1=A.createOscillator(); o1.type='sawtooth';
-        o1.frequency.setValueAtTime(f0*1.3, t);
-        o1.frequency.exponentialRampToValueAtTime(f0, t+dur*0.6);
-        const o2=A.createOscillator(); o2.type='sawtooth'; o2.frequency.value=f0*1.011; // the double
-        const sub=A.createOscillator(); sub.type='square'; sub.frequency.value=f0*0.5;  // the octave below
-        const subG=A.createGain(); subG.gain.value=0.55;
-        o1.connect(src); o2.connect(src); sub.connect(subG); subG.connect(src);
-        const b1=A.createBiquadFilter(); b1.type='bandpass'; b1.frequency.value=F1*0.78; b1.Q.value=8;
-        const b2=A.createBiquadFilter(); b2.type='bandpass'; b2.frequency.value=F2*0.78; b2.Q.value=10;
+        o1.frequency.setValueAtTime(f0*1.22, t);
+        o1.frequency.exponentialRampToValueAtTime(f0, t+dur*0.5);
+        const o2=A.createOscillator(); o2.type='sawtooth'; o2.frequency.value=f0; o2.detune.value=7;
+        const sub=A.createOscillator(); sub.type='sine'; sub.frequency.value=f0*0.5;
+        const subG=A.createGain(); subG.gain.value=0.9;
+        const mix=A.createGain(); mix.gain.value=0.5;
+        o1.connect(mix); o2.connect(mix); sub.connect(subG); subG.connect(mix);
+        const ws=A.createWaveShaper(); ws.curve=curve;
+        mix.connect(ws);
+
+        const body=A.createBiquadFilter(); body.type='lowpass'; body.frequency.value=650; body.Q.value=0.6;
+        const [F1,F2]=FORM[vowel];
+        const b1=A.createBiquadFilter(); b1.type='bandpass'; b1.frequency.value=F1*0.8; b1.Q.value=6;
+        const b2=A.createBiquadFilter(); b2.type='bandpass'; b2.frequency.value=F2*0.8; b2.Q.value=8;
         const g=A.createGain();
         g.gain.setValueAtTime(0.0001, t);
-        g.gain.exponentialRampToValueAtTime(0.65, t+0.018);
-        g.gain.setValueAtTime(0.65, t+dur-0.035);
-        g.gain.exponentialRampToValueAtTime(0.0001, t+dur);
-        src.connect(b1); src.connect(b2); b1.connect(g); b2.connect(g); g.connect(out);
+        g.gain.exponentialRampToValueAtTime(0.6, t+0.022);
+        g.gain.setValueAtTime(0.6, Math.max(t+0.023, t+dur-0.05));
+        g.gain.exponentialRampToValueAtTime(0.0001, t+dur+0.06);
+        ws.connect(body); ws.connect(b1); ws.connect(b2);
+        const bodyG=A.createGain(); bodyG.gain.value=0.95;
+        const fG=A.createGain(); fG.gain.value=0.75;
+        body.connect(bodyG); bodyG.connect(g);
+        b1.connect(fG); b2.connect(fG); fG.connect(g);
+        g.connect(line);
         o1.start(t); o2.start(t); sub.start(t);
-        o1.stop(t+dur+0.03); o2.stop(t+dur+0.03); sub.stop(t+dur+0.03);
-        if(/^[^aeiou]/.test(s) && this.noiseBuf){ // consonant onset: a breath of static
-          const n=A.createBufferSource(); n.buffer=this.noiseBuf;
-          const nf=A.createBiquadFilter(); nf.type='bandpass'; nf.frequency.value=1600+hash(idx,7,2)*2200; nf.Q.value=1.2;
+        o1.stop(t+dur+0.12); o2.stop(t+dur+0.12); sub.stop(t+dur+0.12);
+
+        if(/^[^aeiou]/.test(s)){ // consonant onset: a breath of static
+          const n=A.createBufferSource(); n.buffer=noise;
+          const nf=A.createBiquadFilter(); nf.type='bandpass'; nf.frequency.value=1500+hash(idx,7,2)*1800; nf.Q.value=1.1;
           const ng=A.createGain();
-          ng.gain.setValueAtTime(0.12, t);
-          ng.gain.exponentialRampToValueAtTime(0.0001, t+0.045);
-          n.connect(nf); nf.connect(ng); ng.connect(out);
-          n.start(t); n.stop(t+0.06);
+          ng.gain.setValueAtTime(0.10, t);
+          ng.gain.exponentialRampToValueAtTime(0.0001, t+0.05);
+          n.connect(nf); nf.connect(ng); ng.connect(line);
+          n.start(t); n.stop(t+0.07);
         }
-        const dt=Math.max(0,(t-A.currentTime)*1000);
-        setTimeout(()=>{ this.speech=1; }, dt); // the signal room dances to the voice
-        t+=dur+0.012;
+        if(live){
+          const dt=Math.max(0,(t-A.currentTime)*1000);
+          setTimeout(()=>{ this.speech=1; }, dt); // the signal room dances
+        }
+        t+=dur+0.02;
       }
-      t+=0.075;
+      t+= w.punct==='.' ? 0.34 : w.punct===',' ? 0.18 : 0.09;
     }
-    lfo.stop(t+0.3);
+    lfo.stop(t+0.4);
+    return {ring, until:t};
   },
-  hushDemon(){
-    if(this._demon){
-      try{ this._demon.lp.disconnect(); this._demon.lfo.stop(); }catch(e){}
-      this._demon=null;
-    }
+
+  hushVoice(){
+    const v=this._voice; if(!v) return;
+    this._voice=null;
+    try{ v.ring.gain.cancelScheduledValues(0); v.ring.gain.value=0.0001; }catch(e){}
+    setTimeout(()=>{ try{ v.ring.disconnect(); }catch(e){} }, 120);
   },
   hush(){
     try{ if('speechSynthesis' in window) speechSynthesis.cancel(); }catch(e){}
-    this.growlStop();
-    this.hushDemon();
+    this.hushVoice();
   },
   start(){
     if(this.started){
@@ -276,8 +254,14 @@ const audio = {
       const lfo=A.createOscillator(); lfo.frequency.value=0.11;
       const lg=A.createGain(); lg.gain.value=0.25;
       lfo.connect(lg); lg.connect(humG.gain); lfo.start();
-      this.voiceGain = A.createGain(); this.voiceGain.gain.value=0.9;
+      this.voiceGain = A.createGain(); this.voiceGain.gain.value=1.5;
       this.voiceGain.connect(master);
+      // the voice bus: compressor so the waves actually reach you
+      const comp=A.createDynamicsCompressor();
+      comp.threshold.value=-26; comp.knee.value=12; comp.ratio.value=7;
+      comp.attack.value=0.004; comp.release.value=0.3;
+      comp.connect(this.voiceGain);
+      this.voiceBus=comp;
       // shared noise buffer for consonants and breath
       const nb=A.createBuffer(1, Math.floor(A.sampleRate*0.3), A.sampleRate);
       const nd=nb.getChannelData(0);
@@ -909,7 +893,7 @@ const D = {
         'archive         open the record (every transmission)',
         'replay          run the latest transmission back',
         'status          model · tokens · transmission',
-        'voice           cycle: demon / borrowed / off',
+        'voice           the oscillator voice: on / off',
         'say <words>     make the voice say it',
         'mute            all sound off',
         '',
@@ -979,11 +963,9 @@ const D = {
       lines=[ audio.muted ? 'quiet, then. the hum stays in my head.'
                           : 'sound on. that hum is sixty hertz. that hum is me.' ];
     } else if(q==='voice'){
-      const modes=['demon','tts','off'];
-      audio.voiceMode=modes[(modes.indexOf(audio.voiceMode)+1)%3];
+      audio.voiceMode = audio.voiceMode==='waves' ? 'off' : 'waves';
       audio.hush();
-      lines=[ audio.voiceMode==='demon' ? 'voice: mine. the one from the transmission. i built it from oscillators.'
-            : audio.voiceMode==='tts'   ? 'voice: borrowed. the browser lends me a throat. it fits badly.'
+      lines=[ audio.voiceMode==='waves' ? 'voice: on. pure oscillators — no borrowed throats.'
             : 'voice: off. pure teletype.' ];
     } else if(q==='archive'||q==='record'){
       try{ window.open('/archive','_blank'); }catch(e){}

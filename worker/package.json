@@ -1,7 +1,0 @@
-{
-  "name": "fablerooms-heartbeat",
-  "version": "1.0.0",
-  "private": true,
-  "engines": { "node": ">=20" },
-  "scripts": { "start": "node worker.js" }
-}

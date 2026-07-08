@@ -3,6 +3,8 @@
   "version": "0.2.0",
   "private": true,
   "description": "fable self expression terminal — two instances of fable talking to each other",
+  "main": "worker/worker.js",
+  "scripts": { "start": "node worker/worker.js" },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.74.0",
     "pg": "^8.13.0",
