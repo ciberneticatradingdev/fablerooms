@@ -62,7 +62,8 @@ module.exports = async (req, res) => {
       let mediaId = null;
       if (body.media_b64) {
         const buf = Buffer.from(body.media_b64, 'base64');
-        mediaId = await x.v1.uploadMedia(buf, { mimeType: body.media_type || 'image/png' });
+        // v2 media upload — the v1.1 endpoint is not included in the free tier
+        mediaId = await x.v2.uploadMedia(buf, { media_type: body.media_type || 'image/png' });
       }
       const r = await x.v2.tweet(mediaId ? { text, media: { media_ids: [mediaId] } } : { text });
       const id = r.data && r.data.id;
