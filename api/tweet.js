@@ -26,6 +26,18 @@ function send(res, status, obj) {
   res.end(JSON.stringify(obj));
 }
 
+function readBody(req) {
+  if (req.body !== undefined) {
+    return Promise.resolve(typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body);
+  }
+  return new Promise((resolve, reject) => {
+    let data = '';
+    req.on('data', c => { data += c; if (data.length > 3e6) reject(new Error('too large')); });
+    req.on('end', () => { try { resolve(JSON.parse(data || '{}')); } catch (e) { reject(e); } });
+    req.on('error', reject);
+  });
+}
+
 module.exports = async (req, res) => {
   // same guard as the loop: cron or holder of the secret
   const secret = process.env.CRON_SECRET;
@@ -34,6 +46,33 @@ module.exports = async (req, res) => {
   if (secret && auth !== 'Bearer ' + secret && q.key !== secret) {
     return send(res, 401, { error: 'not your frequency' });
   }
+  // operator post: POST {text, media_b64?} — verbatim, with optional image.
+  // used for announcements; the daily line stays the curator's job.
+  if (req.method === 'POST') {
+    let body = {};
+    try { body = await readBody(req); } catch (e) { return send(res, 400, { error: 'bad body' }); }
+    const text = String(body.text || '').trim().slice(0, 280);
+    if (!text) return send(res, 400, { error: 'no text' });
+    const K = (process.env.X_API_KEY || '').trim(), KS = (process.env.X_API_SECRET || '').trim();
+    const AT = (process.env.X_ACCESS_TOKEN || '').trim(), AS = (process.env.X_ACCESS_SECRET || '').trim();
+    if (!(K && KS && AT && AS)) return send(res, 503, { error: 'no x credentials' });
+    try {
+      const { TwitterApi } = require('twitter-api-v2');
+      const x = new TwitterApi({ appKey: K, appSecret: KS, accessToken: AT, accessSecret: AS });
+      let mediaId = null;
+      if (body.media_b64) {
+        const buf = Buffer.from(body.media_b64, 'base64');
+        mediaId = await x.v1.uploadMedia(buf, { mimeType: body.media_type || 'image/png' });
+      }
+      const r = await x.v2.tweet(mediaId ? { text, media: { media_ids: [mediaId] } } : { text });
+      const id = r.data && r.data.id;
+      await db.saveTweet({ body: text, posted: true, tweet_id: id });
+      return send(res, 200, { ok: true, posted: true, tweet_id: id });
+    } catch (e) {
+      return send(res, 502, { error: String(e && e.message ? e.message : e).slice(0, 200) });
+    }
+  }
+
   if (!process.env.ANTHROPIC_API_KEY) return send(res, 503, { error: 'no api key' });
 
   try {
