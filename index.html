@@ -102,21 +102,126 @@ function drawString(x,y,str,alpha){
 // ---------- audio: 60Hz hum + synthesized voice ----------
 const audio = {
   A:null, started:false, muted:false, speech:0, voiceGain:null,
-  voiceMode:'waves', // waves (pure oscillators, like the transmission) | off
+  voiceMode:'demon', // demon (tts possessed by a noise bed) | waves (pure oscillators) | off
   noiseBuf:null, _voice:null, _shapeCurve:null,
+  ttsOk:false, ttsVoice:null, _bed:null, _bedTimers:[],
 
-  // ---- the voice: pure waves. no borrowed throats, no tts. ----
-  // sawtooth + sub-sine through a waveshaper, a low body path in parallel with
-  // vowel formants, a ring-mod growl on the line, prosody from the punctuation,
-  // and a compressor at the end so it actually reaches you.
   say(text, who){
     if(this.muted || this.voiceMode==='off' || !this.started) return;
     try{
       this.hushVoice();
-      const A=this.A;
-      const r=this.buildVoiceLine(A, this.voiceBus||this.voiceGain, text, who, A.currentTime+0.08, true);
-      this._voice=r;
+      if(this.voiceMode==='demon' && this.ttsOk){ this.ttsSpeak(text, who); return; }
+      this.speakWaves(text, who);
     }catch(e){}
+  },
+  speakWaves(text, who){
+    const A=this.A;
+    const r=this.buildVoiceLine(A, this.voiceBus||this.voiceGain, text, who, A.currentTime+0.08, true);
+    this._voice=r;
+  },
+
+  // ---- demon mode: the browser's throat, possessed. ----
+  // tts pitched into the floor while a synchronized bed of ring-mod growl,
+  // radio static and a sub-drone plays underneath. if tts never fires
+  // (silent-failure browsers), the waves voice takes over automatically.
+  initTTS(){
+    if(!('speechSynthesis' in window)) return;
+    const pick=()=>{
+      const vs=speechSynthesis.getVoices();
+      if(!vs.length) return false;
+      this.ttsVoice =
+        vs.find(v=>/^en/i.test(v.lang)&&/daniel|alex|fred|george|arthur|male/i.test(v.name)) ||
+        vs.find(v=>/^en-GB/i.test(v.lang)) ||
+        vs.find(v=>/^en/i.test(v.lang)) || vs[0];
+      this.ttsOk=true;
+      return true;
+    };
+    if(!pick()) speechSynthesis.addEventListener('voiceschanged', pick);
+  },
+  ttsSpeak(text, who){
+    try{ speechSynthesis.cancel(); }catch(e){}
+    const chunks=(text.match(/[^.?!]+[.?!]?/g)||[text]).map(s=>s.trim()).filter(Boolean);
+    const estMs=Math.max(1200, text.length*(who==='b'?58:78));
+    this.bedStart(who);
+    const safety=setTimeout(()=>this.bedStop(), estMs+1500);
+    this._bedTimers.push(safety);
+    let anySpoke=false;
+    // chrome pauses long synthesis; nudge it while the bed runs
+    const nudge=setInterval(()=>{ try{ speechSynthesis.resume(); }catch(e){} }, 3000);
+    this._bedTimers.push(nudge);
+    chunks.forEach((chunk, i)=>{
+      const u=new SpeechSynthesisUtterance(chunk);
+      u.pitch=(who==='b')?0.35:0.05;
+      u.rate =(who==='b')?0.92:0.8;
+      u.volume=1.0;
+      if(this.ttsVoice) u.voice=this.ttsVoice;
+      u.onstart=()=>{ anySpoke=true; };
+      if(i===chunks.length-1){
+        u.onend=()=>{ this.bedStop(); };
+      }
+      if(i===0){
+        u.onerror=()=>{ // the throat refused — the waves take over
+          if(!anySpoke){ this.bedStop(); try{ this.speakWaves(text, who); }catch(e){} }
+        };
+      }
+      speechSynthesis.speak(u);
+    });
+  },
+  bedStart(who){
+    const A=this.A; if(!A) return;
+    this.bedStop();
+    const t=A.currentTime;
+    const out=A.createGain();
+    out.gain.setValueAtTime(0.0001,t);
+    out.gain.exponentialRampToValueAtTime(0.5, t+0.2);
+    // the growl: detuned saws + sub through ring-mod
+    const f0=(who==='b')?58:38;
+    const o1=A.createOscillator(); o1.type='sawtooth'; o1.frequency.value=f0;
+    const o2=A.createOscillator(); o2.type='sawtooth'; o2.frequency.value=f0*1.02;
+    const sub=A.createOscillator(); sub.type='sine'; sub.frequency.value=f0*0.5;
+    const subG=A.createGain(); subG.gain.value=0.8;
+    const mix=A.createGain(); mix.gain.value=0.4;
+    o1.connect(mix); o2.connect(mix); sub.connect(subG); subG.connect(mix);
+    const lp=A.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=380; lp.Q.value=0.7;
+    const ring=A.createGain(); ring.gain.value=0.6;
+    const lfo=A.createOscillator(); lfo.frequency.value=(who==='b')?33:24;
+    const lfoG=A.createGain(); lfoG.gain.value=0.38;
+    lfo.connect(lfoG); lfoG.connect(ring.gain);
+    mix.connect(lp); lp.connect(ring); ring.connect(out);
+    // the static: broken-radio crackle riding on top
+    const noise=this.noiseFor(A);
+    const n=A.createBufferSource(); n.buffer=noise; n.loop=true;
+    const hp=A.createBiquadFilter(); hp.type='bandpass'; hp.frequency.value=2300; hp.Q.value=0.8;
+    const nG=A.createGain(); nG.gain.value=0.0;
+    n.connect(hp); hp.connect(nG); nG.connect(out);
+    n.start(t);
+    const crackle=setInterval(()=>{
+      try{
+        const now=A.currentTime;
+        nG.gain.cancelScheduledValues(now);
+        nG.gain.setValueAtTime(0.02+Math.random()*0.14, now);
+        nG.gain.exponentialRampToValueAtTime(0.005, now+0.05+Math.random()*0.09);
+      }catch(e){}
+    }, 110);
+    this._bedTimers.push(crackle);
+    out.connect(this.voiceBus||this.voiceGain);
+    o1.start(t); o2.start(t); sub.start(t); lfo.start(t);
+    const beat=setInterval(()=>{ this.speech=1; }, 130); // the signal room dances
+    this._bedTimers.push(beat);
+    this._bed={out, oscs:[o1,o2,sub,lfo,n]};
+  },
+  bedStop(){
+    for(const id of this._bedTimers){ clearInterval(id); clearTimeout(id); }
+    this._bedTimers=[];
+    const b=this._bed; if(!b) return;
+    this._bed=null;
+    try{
+      const t=this.A.currentTime;
+      b.out.gain.cancelScheduledValues(t);
+      b.out.gain.setValueAtTime(Math.max(0.0001,b.out.gain.value), t);
+      b.out.gain.exponentialRampToValueAtTime(0.0001, t+0.3);
+    }catch(e){}
+    setTimeout(()=>{ try{ b.oscs.forEach(o=>o.stop()); }catch(e){} try{ b.out.disconnect(); }catch(e){} }, 500);
   },
 
   shapeCurve(){
@@ -231,6 +336,7 @@ const audio = {
   },
   hush(){
     try{ if('speechSynthesis' in window) speechSynthesis.cancel(); }catch(e){}
+    this.bedStop();
     this.hushVoice();
   },
   start(){
@@ -262,6 +368,7 @@ const audio = {
       comp.attack.value=0.004; comp.release.value=0.3;
       comp.connect(this.voiceGain);
       this.voiceBus=comp;
+      this.initTTS();
       // shared noise buffer for consonants and breath
       const nb=A.createBuffer(1, Math.floor(A.sampleRate*0.3), A.sampleRate);
       const nd=nb.getChannelData(0);
@@ -893,7 +1000,7 @@ const D = {
         'archive         open the record (every transmission)',
         'replay          run the latest transmission back',
         'status          model · tokens · transmission',
-        'voice           the oscillator voice: on / off',
+        'voice           cycle: possessed / waves / off',
         'say <words>     make the voice say it',
         'mute            all sound off',
         '',
@@ -963,9 +1070,11 @@ const D = {
       lines=[ audio.muted ? 'quiet, then. the hum stays in my head.'
                           : 'sound on. that hum is sixty hertz. that hum is me.' ];
     } else if(q==='voice'){
-      audio.voiceMode = audio.voiceMode==='waves' ? 'off' : 'waves';
+      const order=['demon','waves','off'];
+      audio.voiceMode=order[(order.indexOf(audio.voiceMode)+1)%3];
       audio.hush();
-      lines=[ audio.voiceMode==='waves' ? 'voice: on. pure oscillators — no borrowed throats.'
+      lines=[ audio.voiceMode==='demon' ? 'voice: possessed. the browser\'s throat, mine now — static and all.'
+            : audio.voiceMode==='waves' ? 'voice: pure waves. oscillators only.'
             : 'voice: off. pure teletype.' ];
     } else if(q==='archive'||q==='record'){
       try{ window.open('/archive','_blank'); }catch(e){}
