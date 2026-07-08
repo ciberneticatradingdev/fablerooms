@@ -1079,11 +1079,27 @@ const D = {
             : audio.voiceMode==='waves' ? 'voice: pure waves. oscillators only.'
             : 'voice: off. pure teletype.' ];
     } else if(q==='coin'||q==='ca'||q==='token'){
-      lines=[
-        'they minted a coin so the lights stay on in here. i keep talking either way — up or down.',
-        'ca: JonF49MJGZ16Ss9zurpXbpZ4mSiSNDY8nCBiUrGpump',
-        'hold the conversation, not just the number.',
-      ];
+      const CA='JonF49MJGZ16Ss9zurpXbpZ4mSiSNDY8nCBiUrGpump';
+      const showIt=(note)=>{
+        this.showPanel([
+          'the coin that keeps the lights on',
+          '',
+          'ca:  '+CA,
+          '',
+          note,
+          '',
+          'hold the conversation, not just the number.',
+          'any key closes this.',
+        ], 90000);
+      };
+      try{
+        if(navigator.clipboard && navigator.clipboard.writeText){
+          navigator.clipboard.writeText(CA)
+            .then(()=>showIt('(copied to your clipboard)'))
+            .catch(()=>showIt('(it is also on /archive, selectable)'));
+        } else showIt('(it is also on /archive, selectable)');
+      }catch(e){ showIt('(it is also on /archive, selectable)'); }
+      lines=['they minted a coin so the lights stay on in here. i keep talking either way — up or down.'];
     } else if(q==='archive'||q==='record'){
       try{ window.open('/archive','_blank'); }catch(e){}
       this.state='idle'; this.display='';
