@@ -88,6 +88,16 @@ module.exports = async (req, res) => {
           had_whitespace: [process.env.X_API_KEY, process.env.X_API_SECRET, process.env.X_ACCESS_TOKEN, process.env.X_ACCESS_SECRET]
             .map(v => v !== (v || '').trim()),
         };
+        // can these credentials READ? separates mispaired keys (read fails too)
+        // from write-permission problems (read works, write refused)
+        try {
+          const { TwitterApi } = require('twitter-api-v2');
+          const probe = new TwitterApi({ appKey: K, appSecret: KS, accessToken: AT, accessSecret: AS });
+          const me = await probe.v2.me();
+          diag.read_ok = true; diag.acting_as = me.data && me.data.username;
+        } catch (e2) {
+          diag.read_ok = false; diag.read_err = String(e2 && e2.message ? e2.message : e2).slice(0, 120);
+        }
       }
     }
 
